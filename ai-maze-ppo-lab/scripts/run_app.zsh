@@ -5,7 +5,7 @@ PROJECT_ROOT="${0:A:h:h}"
 CONDA_BIN="/Users/ericpan/anaconda3/bin/conda"
 CONDA_ENV_NAME="ai-maze-lab"
 PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
-REQUIRED_IMPORTS="import pygame, numpy, matplotlib, gymnasium, stable_baselines3, torch"
+REQUIRED_IMPORTS="import pygame, numpy, matplotlib, gymnasium, stable_baselines3, sb3_contrib, torch"
 
 open_terminal_bootstrap() {
   local terminal_cmd
@@ -17,7 +17,7 @@ open_terminal_bootstrap() {
   fi
 
   if command -v osascript >/dev/null 2>&1; then
-    osascript -e 'display dialog "首次启动需要安装 PPO 依赖：pygame、numpy、matplotlib、gymnasium、stable-baselines3、torch。完成后会自动启动界面。" buttons {"继续"} default button "继续" with title "AI Maze PPO Lab"'
+    osascript -e 'display dialog "首次启动需要安装 PPO 依赖：pygame、numpy、matplotlib、gymnasium、stable-baselines3、sb3-contrib、torch。完成后会自动启动界面。" buttons {"继续"} default button "继续" with title "AI Maze PPO Lab"'
     osascript \
       -e 'tell application "Terminal" to activate' \
       -e "tell application \"Terminal\" to do script \"$terminal_cmd\""

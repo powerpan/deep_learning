@@ -4,6 +4,7 @@ import argparse
 import csv
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -19,7 +20,9 @@ from config import (
     MAX_STEPS,
     MODELS_DIR,
     OUTPUTS_DIR,
+    PPO_ALGO,
     PPO_BATCH_SIZE,
+    PPO_CURRICULUM,
     PPO_ENT_COEF,
     PPO_GAMMA,
     PPO_LEARNING_RATE,
@@ -59,21 +62,36 @@ from random_maps import (
 )
 
 
+@dataclass(frozen=True)
+class TrainingPhase:
+    name: str
+    timesteps: int
+    fixed_maps: list[Path]
+    random_pool: list[GeneratedMap]
+    random_map_probability: float
+
+
 def _load_sb3():
     try:
         from stable_baselines3 import PPO
         from stable_baselines3.common.callbacks import BaseCallback
         from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
+        from sb3_contrib import RecurrentPPO
     except ImportError as exc:
         raise SystemExit(
             "Missing PPO dependencies. Run: pip install -r requirements.txt"
         ) from exc
-    return PPO, BaseCallback, DummyVecEnv, SubprocVecEnv, VecMonitor
+    return PPO, RecurrentPPO, BaseCallback, DummyVecEnv, SubprocVecEnv, VecMonitor
 
 
 def discover_map_files(maps_dir: str | Path) -> list[Path]:
     path = Path(maps_dir)
     return sorted(path.glob("*.txt"))
+
+
+def map_has_key_or_door(path: str | Path) -> bool:
+    text = Path(path).read_text()
+    return "K" in text or "D" in text
 
 
 def rolling_mean(values: list[float], window: int = 100) -> list[float]:
@@ -129,6 +147,35 @@ def save_training_curve(monitor_path: str | Path, output_path: str | Path) -> No
     plt.close(fig)
 
 
+def combine_monitor_csv(parts: list[Path], output_path: Path) -> None:
+    rows: list[str] = []
+    header = ""
+    for path in parts:
+        if not path.exists():
+            monitor_suffix_path = Path(str(path) + ".monitor.csv")
+            path = monitor_suffix_path if monitor_suffix_path.exists() else path
+        if not path.exists():
+            continue
+        with path.open() as handle:
+            for line in handle:
+                if line.startswith("#"):
+                    continue
+                if not header:
+                    header = line
+                    continue
+                if line == header:
+                    continue
+                rows.append(line)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as handle:
+        handle.write('#{"t_start": 0, "env_id": "None"}\n')
+        if header:
+            handle.write(header)
+        for row in rows:
+            handle.write(row)
+
+
 def make_random_factory(pool: list[GeneratedMap]):
     def factory(rng: np.random.Generator) -> GeneratedMap:
         index = int(rng.integers(0, len(pool)))
@@ -172,17 +219,198 @@ def rollout_steps_per_env(base_steps: int, n_envs: int, batch_size: int) -> int:
     return n_steps
 
 
+def allocate_phase_timesteps(total_timesteps: int, rollout_batch: int) -> list[int]:
+    if total_timesteps < rollout_batch * 3:
+        return [total_timesteps]
+
+    ratios = (0.25, 0.35, 0.40)
+    allocated = []
+    used = 0
+    for ratio in ratios[:-1]:
+        value = max(rollout_batch, int(total_timesteps * ratio))
+        value = (value // rollout_batch) * rollout_batch
+        allocated.append(value)
+        used += value
+    allocated.append(max(rollout_batch, total_timesteps - used))
+    return allocated
+
+
+def build_training_phases(
+    *,
+    curriculum: str,
+    total_timesteps: int,
+    rollout_batch: int,
+    fixed_maps: list[Path],
+    random_maps: int,
+    seed: int,
+    rows: int,
+    cols: int,
+    wall_density: float,
+    trap_density: float,
+    style: str,
+    door_orientation: str,
+    endpoint_mode: str,
+    simple_map_probability: float,
+    random_map_probability: float,
+) -> list[TrainingPhase]:
+    if curriculum == "none":
+        return [
+            TrainingPhase(
+                name="full",
+                timesteps=total_timesteps,
+                fixed_maps=fixed_maps,
+                random_pool=build_random_map_pool(
+                    random_maps,
+                    seed=seed,
+                    rows=rows,
+                    cols=cols,
+                    wall_density=wall_density,
+                    trap_density=trap_density,
+                    style=style,
+                    door_orientation=door_orientation,
+                    endpoint_mode=endpoint_mode,
+                    simple_map_probability=simple_map_probability,
+                ),
+                random_map_probability=random_map_probability,
+            )
+        ]
+
+    amounts = allocate_phase_timesteps(total_timesteps, rollout_batch)
+    if len(amounts) == 1:
+        return build_training_phases(
+            curriculum="none",
+            total_timesteps=total_timesteps,
+            rollout_batch=rollout_batch,
+            fixed_maps=fixed_maps,
+            random_maps=random_maps,
+            seed=seed,
+            rows=rows,
+            cols=cols,
+            wall_density=wall_density,
+            trap_density=trap_density,
+            style=style,
+            door_orientation=door_orientation,
+            endpoint_mode=endpoint_mode,
+            simple_map_probability=simple_map_probability,
+            random_map_probability=random_map_probability,
+        )
+
+    simple_fixed_maps = [path for path in fixed_maps if not map_has_key_or_door(path)]
+    phase_specs = [
+        (
+            "exit-only",
+            amounts[0],
+            simple_fixed_maps,
+            min(wall_density, 0.08),
+            0.0,
+            "open",
+            1.0,
+        ),
+        (
+            "key-door",
+            amounts[1],
+            fixed_maps,
+            min(wall_density, 0.12),
+            0.0,
+            style,
+            0.0,
+        ),
+        (
+            "full-mix",
+            amounts[2],
+            fixed_maps,
+            wall_density,
+            trap_density,
+            style,
+            simple_map_probability,
+        ),
+    ]
+
+    phases = []
+    for index, (
+        name,
+        timesteps,
+        phase_fixed_maps,
+        phase_wall_density,
+        phase_trap_density,
+        phase_style,
+        phase_simple_probability,
+    ) in enumerate(phase_specs):
+        phases.append(
+            TrainingPhase(
+                name=name,
+                timesteps=timesteps,
+                fixed_maps=phase_fixed_maps,
+                random_pool=build_random_map_pool(
+                    random_maps,
+                    seed=seed + index * 1000,
+                    rows=rows,
+                    cols=cols,
+                    wall_density=phase_wall_density,
+                    trap_density=phase_trap_density,
+                    style=phase_style,
+                    door_orientation=door_orientation,
+                    endpoint_mode=endpoint_mode,
+                    simple_map_probability=phase_simple_probability,
+                ),
+                random_map_probability=1.0 if not phase_fixed_maps else random_map_probability,
+            )
+        )
+    return phases
+
+
+def create_vec_env(
+    *,
+    phase: TrainingPhase,
+    n_envs: int,
+    vec_env_kind: str,
+    max_steps: int,
+    view_range: int,
+    view_width: int,
+    exploration_reward: bool,
+    seed: int,
+    DummyVecEnv,
+    SubprocVecEnv,
+    VecMonitor,
+    monitor_path: Path,
+):
+    env_fns = [
+        make_training_env(
+            fixed_maps=phase.fixed_maps,
+            random_pool=phase.random_pool,
+            random_map_probability=phase.random_map_probability,
+            max_steps=max_steps,
+            view_range=view_range,
+            view_width=view_width,
+            exploration_reward=exploration_reward,
+            seed=seed + index,
+        )
+        for index in range(n_envs)
+    ]
+    if vec_env_kind == "subproc" and n_envs > 1:
+        env = SubprocVecEnv(env_fns, start_method="spawn")
+    else:
+        env = DummyVecEnv(env_fns)
+    return VecMonitor(
+        env,
+        filename=str(monitor_path),
+        info_keywords=("success", "has_key", "passed_door"),
+    )
+
+
 def format_progress(
     steps: int,
     total_timesteps: int,
     episodes: int,
     elapsed_seconds: float | None = None,
+    speed_steps: int | None = None,
 ) -> str:
     capped_steps = min(steps, total_timesteps)
     percent = 100.0 if total_timesteps <= 0 else capped_steps / total_timesteps * 100.0
     speed_text = "-"
-    if elapsed_seconds and elapsed_seconds > 0 and capped_steps > 0:
-        speed_text = f"{capped_steps / elapsed_seconds:.0f}步/s"
+    speed_steps = capped_steps if speed_steps is None else max(0, speed_steps)
+    if elapsed_seconds and elapsed_seconds > 0 and speed_steps > 0:
+        speed_text = f"{speed_steps / elapsed_seconds:.0f}步/s"
     return (
         f"训练进度：{capped_steps:,}/{total_timesteps:,} "
         f"{percent:.0f}% 回合{episodes} {speed_text}"
@@ -224,6 +452,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--view-range", type=int, default=VIEW_RANGE)
     parser.add_argument("--view-width", type=int, default=VIEW_WIDTH)
     parser.add_argument("--ent-coef", type=float, default=PPO_ENT_COEF)
+    parser.add_argument("--algo", choices=("recurrent-ppo", "ppo"), default=PPO_ALGO)
+    parser.add_argument(
+        "--curriculum",
+        choices=("basic-to-keydoor", "none"),
+        default=PPO_CURRICULUM,
+    )
     parser.add_argument("--n-envs", type=int, default=PPO_N_ENVS)
     parser.add_argument(
         "--vec-env",
@@ -236,7 +470,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--outputs-dir", type=str, default=str(OUTPUTS_DIR))
     args = parser.parse_args(argv)
 
-    PPO, BaseCallback, DummyVecEnv, SubprocVecEnv, VecMonitor = _load_sb3()
+    PPO, RecurrentPPO, BaseCallback, DummyVecEnv, SubprocVecEnv, VecMonitor = _load_sb3()
 
     try:
         import torch
@@ -255,10 +489,13 @@ def main(argv: list[str] | None = None) -> None:
             self.recent_successes: list[float] = []
             self._last_progress_line = ""
             self._start_time = 0.0
+            self._start_steps = 0
 
         def _on_training_start(self) -> None:
             self._start_time = time.perf_counter()
-            self._print_progress(0)
+            self._start_steps = self.num_timesteps
+            if self.num_timesteps == 0:
+                self._print_progress(0)
 
         def _on_step(self) -> bool:
             for info in self.locals.get("infos", []):
@@ -286,6 +523,7 @@ def main(argv: list[str] | None = None) -> None:
                 self.total_timesteps,
                 self.episodes,
                 time.perf_counter() - self._start_time if self._start_time else None,
+                steps - self._start_steps,
             )
             if line != self._last_progress_line:
                 print(line, flush=True)
@@ -298,8 +536,18 @@ def main(argv: list[str] | None = None) -> None:
 
     n_envs = max(1, int(args.n_envs))
     fixed_maps = [Path(args.map)] if args.map else discover_map_files(args.maps_dir)
-    random_pool = build_random_map_pool(
-        args.random_maps,
+    monitor_path = outputs_dir / "training_monitor.csv"
+    vec_env_kind = args.vec_env
+    if vec_env_kind == "auto":
+        vec_env_kind = "dummy"
+    n_steps = rollout_steps_per_env(PPO_N_STEPS, n_envs, PPO_BATCH_SIZE)
+    rollout_batch = n_steps * n_envs
+    phases = build_training_phases(
+        curriculum=args.curriculum,
+        total_timesteps=args.timesteps,
+        rollout_batch=rollout_batch,
+        fixed_maps=fixed_maps,
+        random_maps=args.random_maps,
         seed=args.seed,
         rows=args.random_rows,
         cols=args.random_cols,
@@ -309,57 +557,70 @@ def main(argv: list[str] | None = None) -> None:
         door_orientation=args.door_orientation,
         endpoint_mode=args.endpoint_mode,
         simple_map_probability=args.simple_map_prob,
+        random_map_probability=args.random_map_prob,
     )
-    monitor_path = outputs_dir / "training_monitor.csv"
-    env_fns = [
-        make_training_env(
-            fixed_maps=fixed_maps,
-            random_pool=random_pool,
-            random_map_probability=args.random_map_prob,
+    print(
+        f"训练配置：算法 {args.algo} | 课程 {args.curriculum} | 并行环境 {n_envs} | "
+        f"采样后端 {vec_env_kind} | 每环境 rollout {n_steps} | "
+        f"torch threads {max(1, int(args.torch_threads))}",
+        flush=True,
+    )
+
+    model_class = RecurrentPPO if args.algo == "recurrent-ppo" else PPO
+    policy_name = "MlpLstmPolicy" if args.algo == "recurrent-ppo" else "MlpPolicy"
+    model = None
+    phase_monitor_paths: list[Path] = []
+
+    for phase_index, phase in enumerate(phases):
+        phase_monitor_path = outputs_dir / f"training_monitor_{phase_index + 1}_{phase.name}.csv"
+        phase_monitor_paths.append(phase_monitor_path)
+        env = create_vec_env(
+            phase=phase,
+            n_envs=n_envs,
+            vec_env_kind=vec_env_kind,
             max_steps=args.max_steps,
             view_range=args.view_range,
             view_width=args.view_width,
             exploration_reward=not args.no_exploration_reward,
-            seed=args.seed + index,
+            seed=args.seed + phase_index * 10000,
+            DummyVecEnv=DummyVecEnv,
+            SubprocVecEnv=SubprocVecEnv,
+            VecMonitor=VecMonitor,
+            monitor_path=phase_monitor_path,
         )
-        for index in range(n_envs)
-    ]
-    vec_env_kind = args.vec_env
-    if vec_env_kind == "auto":
-        vec_env_kind = "dummy"
-    if vec_env_kind == "subproc" and n_envs > 1:
-        env = SubprocVecEnv(env_fns, start_method="spawn")
-    else:
-        env = DummyVecEnv(env_fns)
-    env = VecMonitor(
-        env,
-        filename=str(monitor_path),
-        info_keywords=("success", "has_key", "passed_door"),
-    )
-    n_steps = rollout_steps_per_env(PPO_N_STEPS, n_envs, PPO_BATCH_SIZE)
-    print(
-        f"训练配置：并行环境 {n_envs} | 采样后端 {vec_env_kind} | "
-        f"每环境 rollout {n_steps} | torch threads {max(1, int(args.torch_threads))}",
-        flush=True,
-    )
+        print(
+            f"课程阶段 {phase_index + 1}/{len(phases)}：{phase.name} "
+            f"{phase.timesteps:,} steps",
+            flush=True,
+        )
 
-    model = PPO(
-        "MlpPolicy",
-        env,
-        verbose=0,
-        seed=args.seed,
-        learning_rate=PPO_LEARNING_RATE,
-        gamma=PPO_GAMMA,
-        n_steps=n_steps,
-        batch_size=PPO_BATCH_SIZE,
-        ent_coef=args.ent_coef,
-    )
-    model.learn(
-        total_timesteps=args.timesteps,
-        callback=TrainingProgressCallback(args.timesteps),
-    )
+        if model is None:
+            model = model_class(
+                policy_name,
+                env,
+                verbose=0,
+                seed=args.seed,
+                learning_rate=PPO_LEARNING_RATE,
+                gamma=PPO_GAMMA,
+                n_steps=n_steps,
+                batch_size=PPO_BATCH_SIZE,
+                ent_coef=args.ent_coef,
+            )
+            reset_num_timesteps = True
+        else:
+            model.set_env(env)
+            reset_num_timesteps = False
+
+        model.learn(
+            total_timesteps=phase.timesteps,
+            callback=TrainingProgressCallback(args.timesteps),
+            reset_num_timesteps=reset_num_timesteps,
+        )
+        env.close()
+
+    assert model is not None
     model.save(args.model_path)
-    env.close()
+    combine_monitor_csv(phase_monitor_paths, monitor_path)
 
     curve_path = outputs_dir / "ppo_training_curve.png"
     save_training_curve(monitor_path, curve_path)

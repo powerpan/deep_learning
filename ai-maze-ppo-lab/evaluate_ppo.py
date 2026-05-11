@@ -29,6 +29,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(OUTPUTS_DIR / ".matplotlib"))
 os.environ.setdefault("XDG_CACHE_HOME", str(OUTPUTS_DIR / ".cache"))
 
 from maze_env import MazePPOEnv
+from model_utils import initial_recurrent_state, load_trained_model, predict_action
 from random_maps import (
     DOOR_ORIENTATION_OPTIONS,
     ENDPOINT_MODE_OPTIONS,
@@ -38,22 +39,20 @@ from random_maps import (
 from train_ppo import discover_map_files
 
 
-def _load_ppo():
-    try:
-        from stable_baselines3 import PPO
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing PPO dependencies. Run: pip install -r requirements.txt"
-        ) from exc
-    return PPO
-
-
-def run_episode(model, env: MazePPOEnv, deterministic: bool = True) -> dict:
+def run_episode(model, env: MazePPOEnv, deterministic: bool = True, is_recurrent: bool = False) -> dict:
     obs, info = env.reset()
+    recurrent_state, episode_start = initial_recurrent_state(is_recurrent)
     terminated = False
     truncated = False
     while not (terminated or truncated):
-        action, _ = model.predict(obs, deterministic=deterministic)
+        action, recurrent_state, episode_start = predict_action(
+            model,
+            obs,
+            deterministic=deterministic,
+            is_recurrent=is_recurrent,
+            state=recurrent_state,
+            episode_start=episode_start,
+        )
         obs, _reward, terminated, truncated, info = env.step(int(action))
     return dict(info)
 
@@ -122,8 +121,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--outputs-dir", type=str, default=str(OUTPUTS_DIR))
     args = parser.parse_args(argv)
 
-    PPO = _load_ppo()
-    model = PPO.load(args.model)
+    model, is_recurrent = load_trained_model(args.model)
     rng = np.random.default_rng(args.seed)
     deterministic = not args.sample_actions
 
@@ -138,7 +136,12 @@ def main(argv: list[str] | None = None) -> None:
             seed=args.seed,
         )
         ensure_model_env_compatible(model, env)
-        result = run_episode(model, env, deterministic=deterministic)
+        result = run_episode(
+            model,
+            env,
+            deterministic=deterministic,
+            is_recurrent=is_recurrent,
+        )
         result["map_name"] = str(path)
         fixed_results.append(result)
         env.close()
@@ -164,13 +167,19 @@ def main(argv: list[str] | None = None) -> None:
             seed=None if args.seed is None else args.seed + index,
         )
         ensure_model_env_compatible(model, env)
-        result = run_episode(model, env, deterministic=deterministic)
+        result = run_episode(
+            model,
+            env,
+            deterministic=deterministic,
+            is_recurrent=is_recurrent,
+        )
         result["map_name"] = generated.name
         random_results.append(result)
         env.close()
 
     summary = {
         "model": args.model,
+        "model_type": "RecurrentPPO" if is_recurrent else "PPO",
         "seed": args.seed,
         "action_mode": "sample" if args.sample_actions else "deterministic",
         "random_map_params": {

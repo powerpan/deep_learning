@@ -2,7 +2,7 @@
 
 AI Maze PPO Lab 是一个独立于 `ai-maze-lab` 的新项目，用来实验“局部视野 + PPO”的迷宫智能体。
 
-旧项目继续保留 Q-learning 版本；这个项目使用 `Gymnasium + Stable-Baselines3 + PyTorch`，目标不是复用单关卡 Q-table，而是训练一个能在多张固定地图和随机地图中学习通用规则的策略网络。
+旧项目继续保留 Q-learning 版本；这个项目使用 `Gymnasium + Stable-Baselines3/sb3-contrib + PyTorch`，目标不是复用单关卡 Q-table，而是训练一个能在多张固定地图和随机地图中学习通用规则的策略网络。
 
 ## 核心特性
 
@@ -10,7 +10,7 @@ AI Maze PPO Lab 是一个独立于 `ai-maze-lab` 的新项目，用来实验“�
 - 如果地图包含 `K`，智能体初始没有钥匙，必须先走到 `K`，之后才能通过 `D`。如果地图没有 `K/D`，它会被视为普通“找出口”关卡。
 - 观察不是完整地图，而是上下左右四个方向的窄视野带，默认每个方向看 `3 格深 x 3 格宽`。
 - 墙本身可见，墙后的格子不可见，拐角后的内容也不可见。
-- 第一版使用 PPO 的 `MlpPolicy`，不引入 LSTM，先保证能训练、能保存、能回放、能评估。
+- 默认使用 `RecurrentPPO + MlpLstmPolicy`，让模型在局部视野下保留隐藏状态；仍可通过 `--algo ppo` 退回普通 PPO。
 - 训练时可以混合固定关卡和随机可解关卡，随机图支持开放、分割、房间、死胡同、迷宫等风格，门可以横向或纵向出现，出入口也不再固定在左上和右下。
 
 ## 安装
@@ -31,7 +31,7 @@ macOS 上可以直接双击：
 /Users/ericpan/game_project/deep_learning/ai-maze-ppo-lab/start_ai_maze_ppo_lab.command
 ```
 
-首次启动时，如果依赖没有装好，启动器会打开 Terminal，自动安装 `pygame、numpy、matplotlib、gymnasium、stable-baselines3、torch`，完成后再启动界面。
+首次启动时，如果依赖没有装好，启动器会打开 Terminal，自动安装 `pygame、numpy、matplotlib、gymnasium、stable-baselines3、sb3-contrib、torch`，完成后再启动界面。
 
 界面分成两个区域：
 
@@ -70,7 +70,7 @@ macOS 上可以直接双击：
 
 视野规则：智能体不会看到完整地图；它在上、下、左、右四个方向分别看到一个 `3x3` 的前方窄带。这样比单条直线更接近人的侧向余光，也能减少“门刚离开直线视野就完全丢失”的问题。墙体仍会遮挡同一条窄带通道后面的格子。
 
-注意：当前 PPO 主体仍是无记忆 `MlpPolicy`。界面里的“记忆辅助”是试验场回放层的短期辅助逻辑，主要用来避免“拿到钥匙后忘记门在哪、在两格之间打转”。如果要让模型本身具备真正记忆，下一步应升级到 Recurrent PPO 或把历史轨迹编码进 observation。
+注意：当前默认模型已经是 Recurrent PPO，模型本身会维护 LSTM 隐状态。界面里的“记忆辅助”仍然只是试验场回放层的短期辅助逻辑，用来对比或兜底；如果要观察模型本身能力，可以在试验场关闭“记忆辅助”。
 
 如果之前训练过旧版“四向单线视野”的模型，需要在训练场点击 `重置智能体` 后重新训练。新版 observation 维度已经变成四向 `3x3` 窄视野带，旧模型不能直接用于新版试验场。
 
@@ -94,14 +94,22 @@ pip install -r requirements.txt
 
 ```bash
 cd /Users/ericpan/game_project/deep_learning/ai-maze-ppo-lab
-python train_ppo.py --timesteps 500000 --n-envs 4 --random-maps 200 --ent-coef 0.03 --view-range 3 --view-width 3 --random-rows 11 --random-cols 15 --wall-density 0.12 --trap-density 0.04
+python train_ppo.py --timesteps 1000000 --n-envs 4 --random-maps 200 --ent-coef 0.03 --view-range 3 --view-width 3 --random-rows 11 --random-cols 15 --wall-density 0.12 --trap-density 0.04
 ```
 
 更强调泛化训练时，建议显式使用混合随机图：
 
 ```bash
-python train_ppo.py --timesteps 500000 --n-envs 4 --random-maps 300 --random-style mixed --door-orientation mixed --endpoint-mode mixed --random-rows 15 --random-cols 21 --wall-density 0.18 --trap-density 0.08
+python train_ppo.py --timesteps 3000000 --n-envs 4 --random-maps 300 --random-style mixed --door-orientation mixed --endpoint-mode mixed --random-rows 15 --random-cols 21 --wall-density 0.18 --trap-density 0.08
 ```
+
+训练默认使用课程学习：
+
+- `exit-only`：先训练无钥匙、无门、无陷阱的小难度找出口任务。
+- `key-door`：再训练钥匙门任务，暂时不加陷阱。
+- `full-mix`：最后混合普通出口图、钥匙门、陷阱、死胡同和不同门方向。
+
+可以用 `--curriculum none` 关闭课程学习，用 `--algo ppo` 退回无记忆普通 PPO。
 
 并行训练说明：
 
@@ -195,8 +203,8 @@ PPO 使用神经网络策略。这里输入的是局部视野，而不是绝对�
 
 ## 当前限制
 
-- 第一版 PPO 使用无记忆 `MlpPolicy`，在长走廊、回头路、复杂死胡同里可能表现不稳定。
-- 局部视野导致任务变成部分可观测问题，后续可以升级到 Recurrent PPO 或加入短期记忆。
+- Recurrent PPO 比普通 MLP PPO 更适合局部视野，但依然需要足够训练步数；复杂随机泛化通常要百万级到数百万步。
+- 局部视野导致任务变成部分可观测问题，LSTM 只能缓解，不能保证自动学会全局最短路径算法。
 - 随机地图生成器只保证有一条合法路径，不保证每张图都难度均衡；复杂风格和大尺寸通常需要更多训练步数。
 
 ## 测试

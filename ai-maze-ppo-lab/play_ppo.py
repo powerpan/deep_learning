@@ -13,17 +13,8 @@ os.environ.setdefault("MPLCONFIGDIR", str(OUTPUTS_DIR / ".matplotlib"))
 os.environ.setdefault("XDG_CACHE_HOME", str(OUTPUTS_DIR / ".cache"))
 
 from maze_env import MazePPOEnv
+from model_utils import initial_recurrent_state, load_trained_model, predict_action
 from renderer import MazeRenderer
-
-
-def _load_ppo():
-    try:
-        from stable_baselines3 import PPO
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing PPO dependencies. Run: pip install -r requirements.txt"
-        ) from exc
-    return PPO
 
 
 def write_trace(path: Path, lines: list[str]) -> None:
@@ -43,8 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-render", action="store_true")
     args = parser.parse_args(argv)
 
-    PPO = _load_ppo()
-    model = PPO.load(args.model)
+    model, is_recurrent = load_trained_model(args.model)
     env = MazePPOEnv(
         map_path=args.map,
         max_steps=args.max_steps,
@@ -54,9 +44,11 @@ def main(argv: list[str] | None = None) -> None:
     renderer = None if args.no_render else MazeRenderer(show_vision=True)
 
     obs, info = env.reset()
+    recurrent_state, episode_start = initial_recurrent_state(is_recurrent)
     trace = [
         f"Replay for {args.map}",
         f"Model: {args.model}",
+        f"Model type: {'RecurrentPPO' if is_recurrent else 'PPO'}",
         "",
         f"0: pos={info['position']} reward=0.00 has_key={info['has_key']} event={info['event']}",
     ]
@@ -65,7 +57,14 @@ def main(argv: list[str] | None = None) -> None:
         for step in range(1, env.max_steps + 1):
             if renderer and not renderer.render(env, info):
                 break
-            action, _ = model.predict(obs, deterministic=True)
+            action, recurrent_state, episode_start = predict_action(
+                model,
+                obs,
+                deterministic=True,
+                is_recurrent=is_recurrent,
+                state=recurrent_state,
+                episode_start=episode_start,
+            )
             obs, reward, terminated, truncated, info = env.step(int(action))
             action_name = ACTION_NAMES[int(action)]
             trace.append(

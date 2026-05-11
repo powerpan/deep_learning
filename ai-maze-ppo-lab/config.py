@@ -70,6 +70,8 @@ PPO_ENT_COEF = 0.03
 PPO_N_ENVS = 4
 PPO_VEC_ENV = "dummy"
 PPO_TORCH_THREADS = 1
+PPO_ALGO = "recurrent-ppo"
+PPO_CURRICULUM = "basic-to-keydoor"
 
 TILE_SIZE = 42
 PANEL_HEIGHT = 132

@@ -46,6 +46,7 @@ from config import (
     VIEW_WIDTH,
 )
 from maze_env import MazePPOEnv
+from model_utils import initial_recurrent_state, load_trained_model, predict_action
 from random_maps import generate_random_key_door_map
 from text_renderer import TextRenderer
 from vision import visible_cells
@@ -166,6 +167,9 @@ class MazePPOApp:
         self.obs = None
         self.info = {}
         self.model = None
+        self.model_is_recurrent = False
+        self.replay_recurrent_state = None
+        self.replay_episode_start = None
         self.screen_mode = "training"
         self.mode = "ready"
         self.status = "准备就绪"
@@ -187,7 +191,7 @@ class MazePPOApp:
         self.endpoint_mode = RANDOM_ENDPOINT_MODE
         self.ent_coef = 0.03
         self.n_envs = PPO_N_ENVS
-        self.memory_assist = True
+        self.memory_assist = False
         self.deterministic_experiment = False
         self.random_experiment_index = 0
         self.buttons: list[Button] = []
@@ -633,17 +637,19 @@ class MazePPOApp:
             self.status = "还没有模型，请先训练"
             return
         try:
-            from stable_baselines3 import PPO
-        except ImportError:
-            self.status = "缺少 stable-baselines3，请先安装依赖"
+            self.model, self.model_is_recurrent = load_trained_model(str(MODEL_PATH))
+        except SystemExit:
+            self.status = "缺少 PPO 依赖，请先安装 requirements.txt"
             return
-        self.model = PPO.load(MODEL_PATH)
         assert self.env is not None
         if self.model.observation_space.shape != self.env.observation_space.shape:
             self.model = None
             self.status = "模型视野格式已过期，请重置并重新训练"
             return
         self.obs, self.info = self.env.reset()
+        self.replay_recurrent_state, self.replay_episode_start = initial_recurrent_state(
+            self.model_is_recurrent
+        )
         self.replay_state_visits = {}
         self.replay_recent_states.clear()
         self.remembered_key = None
@@ -655,6 +661,7 @@ class MazePPOApp:
             f"Replay for {self.current_map_label}",
             f"Map kind: {self.current_map_kind}",
             f"Model: {MODEL_PATH}",
+            f"Model type: {'RecurrentPPO' if self.model_is_recurrent else 'PPO'}",
             f"Memory assist: {self.memory_assist}",
             f"Action mode: {'greedy' if self.deterministic_experiment else 'sample'}",
             "",
@@ -670,9 +677,13 @@ class MazePPOApp:
             return
         assert self.env is not None
         self._remember_visible_targets()
-        action, _ = self.model.predict(
+        action, self.replay_recurrent_state, self.replay_episode_start = predict_action(
+            self.model,
             self.obs,
             deterministic=self.deterministic_experiment,
+            is_recurrent=self.model_is_recurrent,
+            state=self.replay_recurrent_state,
+            episode_start=self.replay_episode_start,
         )
         model_action = int(action)
         assisted_action = self._assist_action(model_action)
