@@ -28,6 +28,7 @@ from config import (
     PPO_ENT_COEF,
     PPO_GAMMA,
     PPO_LEARNING_RATE,
+    PPO_N_EPOCHS,
     PPO_N_ENVS,
     PPO_N_STEPS,
     PPO_TORCH_THREADS,
@@ -469,6 +470,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--local-view-size", type=int, default=LOCAL_VIEW_SIZE)
     parser.add_argument("--ent-coef", type=float, default=PPO_ENT_COEF)
+    parser.add_argument("--batch-size", type=int, default=PPO_BATCH_SIZE)
+    parser.add_argument("--n-epochs", type=int, default=PPO_N_EPOCHS)
     parser.add_argument("--algo", choices=("recurrent-ppo", "ppo"), default=PPO_ALGO)
     parser.add_argument(
         "--curriculum",
@@ -557,7 +560,9 @@ def main(argv: list[str] | None = None) -> None:
     vec_env_kind = args.vec_env
     if vec_env_kind == "auto":
         vec_env_kind = "dummy"
-    n_steps = rollout_steps_per_env(PPO_N_STEPS, n_envs, PPO_BATCH_SIZE)
+    batch_size = max(1, int(args.batch_size))
+    n_epochs = max(1, int(args.n_epochs))
+    n_steps = rollout_steps_per_env(PPO_N_STEPS, n_envs, batch_size)
     rollout_batch = n_steps * n_envs
     phases = build_training_phases(
         curriculum=args.curriculum,
@@ -585,6 +590,7 @@ def main(argv: list[str] | None = None) -> None:
         f"训练配置：算法 {args.algo} | 课程 {args.curriculum} | "
         f"观察 {observation_label} | 并行环境 {n_envs} | "
         f"采样后端 {vec_env_kind} | 每环境 rollout {n_steps} | "
+        f"batch {batch_size} | epochs {n_epochs} | "
         f"torch threads {max(1, int(args.torch_threads))}",
         flush=True,
     )
@@ -594,7 +600,7 @@ def main(argv: list[str] | None = None) -> None:
         policy_name = "CnnLstmPolicy" if args.algo == "recurrent-ppo" else "CnnPolicy"
         policy_kwargs = {
             "features_extractor_class": SmallGridCNN,
-            "features_extractor_kwargs": {"features_dim": 128},
+            "features_extractor_kwargs": {"features_dim": 64},
         }
     else:
         policy_name = "MlpLstmPolicy" if args.algo == "recurrent-ppo" else "MlpPolicy"
@@ -636,7 +642,8 @@ def main(argv: list[str] | None = None) -> None:
                 learning_rate=PPO_LEARNING_RATE,
                 gamma=PPO_GAMMA,
                 n_steps=n_steps,
-                batch_size=PPO_BATCH_SIZE,
+                batch_size=batch_size,
+                n_epochs=n_epochs,
                 ent_coef=args.ent_coef,
                 policy_kwargs=policy_kwargs,
             )

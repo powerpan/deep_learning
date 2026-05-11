@@ -14,15 +14,15 @@ class SmallGridCNN(BaseFeaturesExtractor):
     extractor keeps CnnPolicy usable for small local-grid observations.
     """
 
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 128):
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 64):
         super().__init__(observation_space, features_dim)
         channels = int(observation_space.shape[0])
         self.cnn = nn.Sequential(
-            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
+            nn.Conv2d(channels, 16, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Flatten(),
         )

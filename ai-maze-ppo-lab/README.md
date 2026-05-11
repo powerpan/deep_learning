@@ -116,6 +116,12 @@ python train_ppo.py --timesteps 3000000 --n-envs 4 --random-maps 300 --random-st
 
 可以用 `--curriculum none` 关闭课程学习，用 `--algo ppo` 退回无记忆普通 PPO，用 `--obs-mode strips` 退回旧版四向视野带。
 
+默认 PPO 更新参数已按本项目的小网格模型调成 `--batch-size 256 --n-epochs 4`。这会明显减少每个 rollout 后的梯度更新耗时，比 SB3 默认的 `batch_size=64 / n_epochs=10` 更适合在 MacBook Air 上快速迭代。如果想更充分地反复利用采样数据，可以命令行改回：
+
+```bash
+python train_ppo.py --batch-size 64 --n-epochs 10
+```
+
 并行训练说明：
 
 - `--n-envs 1`：最稳，速度较慢。
