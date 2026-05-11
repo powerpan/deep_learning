@@ -22,6 +22,7 @@ from config import (
     KEY_REWARD,
     LOCKED_DOOR_REWARD,
     MAX_STEPS,
+    MAX_STEPS_PER_CELL,
     REVISIT_PENALTY,
     STEP_REWARD,
     TILE_DOOR,
@@ -47,6 +48,8 @@ class MapData:
     grid: list[list[str]]
     start: tuple[int, int]
     exit: tuple[int, int]
+    has_key_tile: bool
+    has_door_tile: bool
 
 
 RandomMapFactory = Callable[[np.random.Generator], GeneratedMap]
@@ -67,6 +70,8 @@ def parse_map(lines: list[str], name: str = "map") -> MapData:
 
     start_positions: list[tuple[int, int]] = []
     exit_positions: list[tuple[int, int]] = []
+    has_key_tile = False
+    has_door_tile = False
     valid_tiles = {
         TILE_START,
         TILE_EXIT,
@@ -85,6 +90,10 @@ def parse_map(lines: list[str], name: str = "map") -> MapData:
                 start_positions.append((row, col))
             elif tile == TILE_EXIT:
                 exit_positions.append((row, col))
+            elif tile == TILE_KEY:
+                has_key_tile = True
+            elif tile == TILE_DOOR:
+                has_door_tile = True
 
     if len(start_positions) != 1:
         raise ValueError(f"Map {name} must contain exactly one S")
@@ -97,6 +106,8 @@ def parse_map(lines: list[str], name: str = "map") -> MapData:
         grid=[list(line) for line in lines],
         start=start_positions[0],
         exit=exit_positions[0],
+        has_key_tile=has_key_tile,
+        has_door_tile=has_door_tile,
     )
 
 
@@ -118,6 +129,7 @@ class MazePPOEnv(gym.Env):
     ) -> None:
         super().__init__()
         self.rng = np.random.default_rng(seed)
+        self.base_max_steps = max_steps
         self.max_steps = max_steps
         self.view_range = view_range
         self.view_width = view_width
@@ -170,11 +182,12 @@ class MazePPOEnv(gym.Env):
             self.rng = np.random.default_rng(seed)
 
         self.map_data = self._choose_map()
+        self.max_steps = self._max_steps_for_map(self.map_data)
         self.grid = [row[:] for row in self.map_data.grid]
         self.agent_pos = self.map_data.start
-        self.has_key = False
-        self.key_collected = False
-        self.passed_door = False
+        self.has_key = not self.map_data.has_key_tile
+        self.key_collected = not self.map_data.has_key_tile
+        self.passed_door = not self.map_data.has_door_tile
         self.reached_exit = False
         self.step_count = 0
         self.total_reward = 0.0
@@ -250,9 +263,12 @@ class MazePPOEnv(gym.Env):
         self.visit_counts[row, col] += 1
         if previous_visits == 0:
             return DISCOVERY_REWARD
-        if previous_visits >= 2:
-            return REVISIT_PENALTY
-        return 0.0
+        return REVISIT_PENALTY
+
+    def _max_steps_for_map(self, map_data: MapData) -> int:
+        base_steps = self.base_max_steps if self.base_max_steps > 0 else MAX_STEPS
+        map_scaled_steps = int(len(map_data.lines) * len(map_data.lines[0]) * MAX_STEPS_PER_CELL)
+        return max(base_steps, map_scaled_steps)
 
     def _choose_map(self) -> MapData:
         use_random = (
@@ -294,6 +310,8 @@ class MazePPOEnv(gym.Env):
             "position": self.agent_pos,
             "has_key": self.has_key,
             "key_collected": self.key_collected,
+            "requires_key": self.map_data.has_key_tile if self.map_data else False,
+            "has_door": self.map_data.has_door_tile if self.map_data else False,
             "passed_door": self.passed_door,
             "success": self.reached_exit,
             "steps": self.step_count,

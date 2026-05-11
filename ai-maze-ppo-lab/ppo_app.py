@@ -919,12 +919,14 @@ class MazePPOApp:
 
         scene = "训练场" if self.screen_mode == "training" else "试验场"
         map_kind = "固定地图" if self.current_map_kind == "fixed" else "随机地图"
+        key_text = "不需要" if not self.info.get("requires_key", True) else str(self.info.get("has_key", False))
+        door_text = "无门" if not self.info.get("has_door", True) else str(self.info.get("passed_door", False))
         lines = [
             f"区域：{scene}",
             f"地图：{self._shorten(self.current_map_label, 21)}（{map_kind}）",
             f"状态：{self._shorten(self.status, 24)}",
-            f"模型：{'已存在' if MODEL_PATH.exists() else '未训练'}  步数：{self.info.get('steps', 0)}/{MAX_STEPS}",
-            f"奖励：{self.info.get('total_reward', 0.0):.1f}  钥匙：{self.info.get('has_key', False)}  门：{self.info.get('passed_door', False)}",
+            f"模型：{'已存在' if MODEL_PATH.exists() else '未训练'}  步数：{self.info.get('steps', 0)}/{self.env.max_steps}",
+            f"奖励：{self.info.get('total_reward', 0.0):.1f}  钥匙：{key_text}  门：{door_text}",
             f"视野：四向 {VIEW_RANGE}x{VIEW_WIDTH} 窄视野带",
             f"随机：{self.random_rows}x{self.random_cols}  墙{self.wall_density:.2f}  陷{self.trap_density:.2f}",
             (

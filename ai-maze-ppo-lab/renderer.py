@@ -139,6 +139,8 @@ class MazeRenderer:
         title = "AI Maze PPO Lab"
         if episode is not None:
             title += f" | Episode {episode}"
+        key_text = "not needed" if not info.get("requires_key", True) else str(info.get("has_key", False))
+        door_text = "none" if not info.get("has_door", True) else str(info.get("passed_door", False))
         lines = [
             title,
             f"Map: {env.map_name}",
@@ -148,8 +150,8 @@ class MazeRenderer:
                 f"Event: {info.get('event', '-')}"
             ),
             (
-                f"Key: {info.get('has_key', False)}   "
-                f"Door: {info.get('passed_door', False)}   "
+                f"Key: {key_text}   "
+                f"Door: {door_text}   "
                 f"Success: {info.get('success', False)}   "
                 f"Vision: directional strips, {env.view_range} x {env.view_width}"
             ),

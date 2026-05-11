@@ -32,6 +32,7 @@ from config import (
     RANDOM_DOOR_ORIENTATION,
     RANDOM_ENDPOINT_MODE,
     RANDOM_MAP_STYLE,
+    RANDOM_SIMPLE_MAP_PROB,
     RANDOM_TRAP_DENSITY,
     RANDOM_WALL_DENSITY,
     VIEW_RANGE,
@@ -199,6 +200,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--random-cols", type=int, default=RANDOM_MAP_COLS)
     parser.add_argument("--wall-density", type=float, default=RANDOM_WALL_DENSITY)
     parser.add_argument("--trap-density", type=float, default=RANDOM_TRAP_DENSITY)
+    parser.add_argument("--simple-map-prob", type=float, default=RANDOM_SIMPLE_MAP_PROB)
     parser.add_argument(
         "--random-style",
         type=str,
@@ -306,6 +308,7 @@ def main(argv: list[str] | None = None) -> None:
         style=args.random_style,
         door_orientation=args.door_orientation,
         endpoint_mode=args.endpoint_mode,
+        simple_map_probability=args.simple_map_prob,
     )
     monitor_path = outputs_dir / "training_monitor.csv"
     env_fns = [

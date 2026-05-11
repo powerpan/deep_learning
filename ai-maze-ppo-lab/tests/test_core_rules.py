@@ -7,6 +7,7 @@ from maze_env import MazePPOEnv
 from random_maps import (
     build_random_map_pool,
     find_tile,
+    generate_random_exit_map,
     generate_random_key_door_map,
     is_solvable_key_door,
 )
@@ -52,12 +53,37 @@ class MazeRulesTest(unittest.TestCase):
         self.assertAlmostEqual(reward, -0.05)
         env.step(2)
         _, reward, *_ = env.step(3)
-        self.assertAlmostEqual(reward, -0.1)
+        self.assertAlmostEqual(reward, -0.18)
         env.step(2)
         _, reward, *_ = env.step(3)
-        self.assertAlmostEqual(reward, -0.13)
+        self.assertAlmostEqual(reward, -0.18)
         _, reward, *_ = env.step(2)
-        self.assertAlmostEqual(reward, -0.13)
+        self.assertAlmostEqual(reward, -0.18)
+
+    def test_keyless_map_starts_with_key_condition_satisfied(self):
+        env = MazePPOEnv(map_lines=["#####", "#SE.#", "#####"])
+        _, info = env.reset()
+        self.assertFalse(info["requires_key"])
+        self.assertFalse(info["has_door"])
+        self.assertTrue(info["has_key"])
+        self.assertTrue(info["passed_door"])
+
+    def test_large_map_gets_scaled_step_budget(self):
+        rows = 21
+        cols = 31
+        lines = ["#" * cols]
+        for row in range(1, rows - 1):
+            if row == 1:
+                lines.append("#S" + "." * (cols - 3) + "#")
+            elif row == rows - 2:
+                lines.append("#" + "." * (cols - 3) + "E#")
+            else:
+                lines.append("#" + "." * (cols - 2) + "#")
+        lines.append("#" * cols)
+
+        env = MazePPOEnv(map_lines=lines)
+        env.reset()
+        self.assertGreater(env.max_steps, 260)
 
 
 class VisionTest(unittest.TestCase):
@@ -189,6 +215,28 @@ class RandomMapTest(unittest.TestCase):
                     trap_density=0.05,
                 )
                 self.assertTrue(is_solvable_key_door(generated.lines))
+
+    def test_random_exit_maps_have_no_key_or_door(self):
+        generated = generate_random_exit_map(
+            rng=321,
+            rows=13,
+            cols=17,
+            style="rooms",
+            wall_density=0.12,
+            trap_density=0.04,
+        )
+        text = "\n".join(generated.lines)
+        self.assertIn("S", text)
+        self.assertIn("E", text)
+        self.assertNotIn("K", text)
+        self.assertNotIn("D", text)
+        self.assertTrue(is_solvable_key_door(generated.lines))
+
+    def test_random_pool_can_mix_simple_and_key_door_maps(self):
+        pool = build_random_map_pool(8, seed=456, simple_map_probability=0.5)
+        texts = ["\n".join(item.lines) for item in pool]
+        self.assertTrue(any("K" not in text and "D" not in text for text in texts))
+        self.assertTrue(any("K" in text and "D" in text for text in texts))
 
 
 if __name__ == "__main__":

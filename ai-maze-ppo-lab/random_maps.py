@@ -12,6 +12,7 @@ from config import (
     RANDOM_DOOR_ORIENTATION,
     RANDOM_ENDPOINT_MODE,
     RANDOM_MAP_STYLE,
+    RANDOM_SIMPLE_MAP_PROB,
     RANDOM_TRAP_DENSITY,
     RANDOM_WALL_DENSITY,
     TILE_DOOR,
@@ -201,6 +202,86 @@ def generate_random_key_door_map(
     return GeneratedMap(name=name, lines=lines)
 
 
+def generate_random_exit_map(
+    rng: np.random.Generator | int | None = None,
+    rows: int = RANDOM_MAP_ROWS,
+    cols: int = RANDOM_MAP_COLS,
+    wall_density: float = RANDOM_WALL_DENSITY,
+    trap_density: float = RANDOM_TRAP_DENSITY,
+    style: str = RANDOM_MAP_STYLE,
+    endpoint_mode: str = RANDOM_ENDPOINT_MODE,
+    name: str = "random_simple",
+    _attempt: int = 0,
+) -> GeneratedMap:
+    if not isinstance(rng, np.random.Generator):
+        rng = np.random.default_rng(rng)
+
+    rows = max(rows, 7)
+    cols = max(cols, 9)
+    style = _resolve_option(style, STYLE_OPTIONS, rng)
+    endpoint_mode = _resolve_option(endpoint_mode, ENDPOINT_MODE_OPTIONS, rng)
+    wall_density, trap_density = _style_densities(style, wall_density, trap_density)
+
+    grid = [[TILE_EMPTY for _ in range(cols)] for _ in range(rows)]
+    for row in range(rows):
+        grid[row][0] = TILE_WALL
+        grid[row][cols - 1] = TILE_WALL
+    for col in range(cols):
+        grid[0][col] = TILE_WALL
+        grid[rows - 1][col] = TILE_WALL
+
+    region = (1, rows - 2, 1, cols - 2)
+    start = _choose_point(region, endpoint_mode, rng)
+    exit_pos = _choose_distinct_mode_point(region, {start}, endpoint_mode, rng)
+    protected = _path_between(start, exit_pos, rng)
+    protected.update({start, exit_pos})
+
+    _add_style_walls(grid, protected, rng, style)
+
+    for row in range(1, rows - 1):
+        for col in range(1, cols - 1):
+            if (row, col) in protected:
+                continue
+            roll = float(rng.random())
+            if roll < wall_density:
+                grid[row][col] = TILE_WALL
+            elif roll < wall_density + trap_density:
+                grid[row][col] = TILE_TRAP
+
+    sr, sc = start
+    er, ec = exit_pos
+    grid[sr][sc] = TILE_START
+    grid[er][ec] = TILE_EXIT
+
+    lines = ["".join(row) for row in grid]
+    if not is_solvable_key_door(lines):
+        if _attempt >= 12:
+            return generate_random_exit_map(
+                rng=rng,
+                rows=rows,
+                cols=cols,
+                wall_density=0.0,
+                trap_density=0.0,
+                style="open",
+                endpoint_mode=endpoint_mode,
+                name=name,
+                _attempt=_attempt + 1,
+            )
+        return generate_random_exit_map(
+            rng=rng,
+            rows=rows,
+            cols=cols,
+            wall_density=max(0.0, wall_density * 0.8),
+            trap_density=max(0.0, trap_density * 0.8),
+            style=style,
+            endpoint_mode=endpoint_mode,
+            name=name,
+            _attempt=_attempt + 1,
+        )
+
+    return GeneratedMap(name=name, lines=lines)
+
+
 def _resolve_option(value: str, options: tuple[str, ...], rng: np.random.Generator) -> str:
     if value not in options:
         value = options[0]
@@ -316,6 +397,19 @@ def _choose_distinct_point(
     return rmin, cmin
 
 
+def _choose_distinct_mode_point(
+    region: tuple[int, int, int, int],
+    blocked: set[tuple[int, int]],
+    mode: str,
+    rng: np.random.Generator,
+) -> tuple[int, int]:
+    for _ in range(40):
+        point = _choose_point(region, mode, rng)
+        if point not in blocked:
+            return point
+    return _choose_distinct_point(region, blocked, rng)
+
+
 def _add_style_walls(
     grid: list[list[str]],
     protected: set[tuple[int, int]],
@@ -372,19 +466,37 @@ def build_random_map_pool(
     style: str = RANDOM_MAP_STYLE,
     door_orientation: str = RANDOM_DOOR_ORIENTATION,
     endpoint_mode: str = RANDOM_ENDPOINT_MODE,
+    simple_map_probability: float = RANDOM_SIMPLE_MAP_PROB,
 ) -> list[GeneratedMap]:
     rng = np.random.default_rng(seed)
-    return [
-        generate_random_key_door_map(
-            rng=rng,
-            rows=rows,
-            cols=cols,
-            wall_density=wall_density,
-            trap_density=trap_density,
-            style=style,
-            door_orientation=door_orientation,
-            endpoint_mode=endpoint_mode,
-            name=f"random_{index:04d}",
-        )
-        for index in range(max(0, count))
-    ]
+    simple_map_probability = float(np.clip(simple_map_probability, 0.0, 1.0))
+    pool = []
+    for index in range(max(0, count)):
+        if float(rng.random()) < simple_map_probability:
+            pool.append(
+                generate_random_exit_map(
+                    rng=rng,
+                    rows=rows,
+                    cols=cols,
+                    wall_density=wall_density,
+                    trap_density=trap_density,
+                    style=style,
+                    endpoint_mode=endpoint_mode,
+                    name=f"random_simple_{index:04d}",
+                )
+            )
+        else:
+            pool.append(
+                generate_random_key_door_map(
+                    rng=rng,
+                    rows=rows,
+                    cols=cols,
+                    wall_density=wall_density,
+                    trap_density=trap_density,
+                    style=style,
+                    door_orientation=door_orientation,
+                    endpoint_mode=endpoint_mode,
+                    name=f"random_key_door_{index:04d}",
+                )
+            )
+    return pool

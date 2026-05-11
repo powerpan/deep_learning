@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     ]
 
     try:
-        for step in range(1, args.max_steps + 1):
+        for step in range(1, env.max_steps + 1):
             if renderer and not renderer.render(env, info):
                 break
             action, _ = model.predict(obs, deterministic=True)
