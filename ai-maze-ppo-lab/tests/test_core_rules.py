@@ -11,7 +11,14 @@ from random_maps import (
     generate_random_key_door_map,
     is_solvable_key_door,
 )
-from vision import CHANNEL_INDEX, encode_line_of_sight, observation_size
+from vision import (
+    CHANNEL_INDEX,
+    LOCAL_GRID_CHANNEL_INDEX,
+    encode_line_of_sight,
+    encode_local_grid,
+    local_grid_channels,
+    observation_size,
+)
 
 
 class MazeRulesTest(unittest.TestCase):
@@ -141,6 +148,31 @@ class VisionTest(unittest.TestCase):
         right_strip = strips[3]
         self.assertEqual(np.argmax(right_strip[1, 1]), CHANNEL_INDEX["key"])
         self.assertEqual(np.argmax(right_strip[0, 0]), CHANNEL_INDEX["empty"])
+
+    def test_local_grid_observation_is_image_shaped(self):
+        grid = [list("#####"), list("#SKE#"), list("#####")]
+        obs = encode_local_grid(
+            grid,
+            (1, 1),
+            False,
+            False,
+            0,
+            100,
+            local_view_size=7,
+        )
+        self.assertEqual(obs.shape, (local_grid_channels(), 7, 7))
+        self.assertEqual(obs.dtype, np.uint8)
+        self.assertEqual(obs[LOCAL_GRID_CHANNEL_INDEX["tile"], 3, 3], 255)
+
+    def test_env_grid_observation_tracks_last_action_and_repeats(self):
+        env = MazePPOEnv(map_lines=["#####", "#S..#", "#..E#", "#####"])
+        obs, _ = env.reset()
+        self.assertEqual(obs.shape, env.observation_space.shape)
+        obs, *_ = env.step(3)
+        self.assertEqual(obs[LOCAL_GRID_CHANNEL_INDEX["last_action"], 3, 3], 255)
+        obs, *_ = env.step(2)
+        self.assertEqual(obs[LOCAL_GRID_CHANNEL_INDEX["last_action"], 3, 3], 191)
+        self.assertEqual(obs[LOCAL_GRID_CHANNEL_INDEX["step_repeat"], 3, 3], 255)
 
 
 class RandomMapTest(unittest.TestCase):

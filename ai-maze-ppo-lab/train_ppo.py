@@ -16,9 +16,11 @@ import numpy as np
 
 from config import (
     DEFAULT_RANDOM_MAP_PROB,
+    LOCAL_VIEW_SIZE,
     MAPS_DIR,
     MAX_STEPS,
     MODELS_DIR,
+    OBSERVATION_MODE,
     OUTPUTS_DIR,
     PPO_ALGO,
     PPO_BATCH_SIZE,
@@ -53,6 +55,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from maze_env import MazePPOEnv
+from policy import SmallGridCNN
 from random_maps import (
     DOOR_ORIENTATION_OPTIONS,
     ENDPOINT_MODE_OPTIONS,
@@ -192,6 +195,8 @@ def make_training_env(
     max_steps: int,
     view_range: int,
     view_width: int,
+    observation_mode: str,
+    local_view_size: int,
     exploration_reward: bool,
     seed: int,
 ):
@@ -204,6 +209,8 @@ def make_training_env(
             max_steps=max_steps,
             view_range=view_range,
             view_width=view_width,
+            observation_mode=observation_mode,
+            local_view_size=local_view_size,
             exploration_reward=exploration_reward,
             seed=seed,
         )
@@ -367,6 +374,8 @@ def create_vec_env(
     max_steps: int,
     view_range: int,
     view_width: int,
+    observation_mode: str,
+    local_view_size: int,
     exploration_reward: bool,
     seed: int,
     DummyVecEnv,
@@ -382,6 +391,8 @@ def create_vec_env(
             max_steps=max_steps,
             view_range=view_range,
             view_width=view_width,
+            observation_mode=observation_mode,
+            local_view_size=local_view_size,
             exploration_reward=exploration_reward,
             seed=seed + index,
         )
@@ -451,6 +462,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--view-range", type=int, default=VIEW_RANGE)
     parser.add_argument("--view-width", type=int, default=VIEW_WIDTH)
+    parser.add_argument(
+        "--obs-mode",
+        choices=("grid", "strips"),
+        default=OBSERVATION_MODE,
+    )
+    parser.add_argument("--local-view-size", type=int, default=LOCAL_VIEW_SIZE)
     parser.add_argument("--ent-coef", type=float, default=PPO_ENT_COEF)
     parser.add_argument("--algo", choices=("recurrent-ppo", "ppo"), default=PPO_ALGO)
     parser.add_argument(
@@ -559,15 +576,29 @@ def main(argv: list[str] | None = None) -> None:
         simple_map_probability=args.simple_map_prob,
         random_map_probability=args.random_map_prob,
     )
+    observation_label = (
+        f"grid {args.local_view_size}x{args.local_view_size}"
+        if args.obs_mode == "grid"
+        else f"strips {args.view_range}x{args.view_width}"
+    )
     print(
-        f"训练配置：算法 {args.algo} | 课程 {args.curriculum} | 并行环境 {n_envs} | "
+        f"训练配置：算法 {args.algo} | 课程 {args.curriculum} | "
+        f"观察 {observation_label} | 并行环境 {n_envs} | "
         f"采样后端 {vec_env_kind} | 每环境 rollout {n_steps} | "
         f"torch threads {max(1, int(args.torch_threads))}",
         flush=True,
     )
 
     model_class = RecurrentPPO if args.algo == "recurrent-ppo" else PPO
-    policy_name = "MlpLstmPolicy" if args.algo == "recurrent-ppo" else "MlpPolicy"
+    if args.obs_mode == "grid":
+        policy_name = "CnnLstmPolicy" if args.algo == "recurrent-ppo" else "CnnPolicy"
+        policy_kwargs = {
+            "features_extractor_class": SmallGridCNN,
+            "features_extractor_kwargs": {"features_dim": 128},
+        }
+    else:
+        policy_name = "MlpLstmPolicy" if args.algo == "recurrent-ppo" else "MlpPolicy"
+        policy_kwargs = None
     model = None
     phase_monitor_paths: list[Path] = []
 
@@ -581,6 +612,8 @@ def main(argv: list[str] | None = None) -> None:
             max_steps=args.max_steps,
             view_range=args.view_range,
             view_width=args.view_width,
+            observation_mode=args.obs_mode,
+            local_view_size=args.local_view_size,
             exploration_reward=not args.no_exploration_reward,
             seed=args.seed + phase_index * 10000,
             DummyVecEnv=DummyVecEnv,
@@ -605,6 +638,7 @@ def main(argv: list[str] | None = None) -> None:
                 n_steps=n_steps,
                 batch_size=PPO_BATCH_SIZE,
                 ent_coef=args.ent_coef,
+                policy_kwargs=policy_kwargs,
             )
             reset_num_timesteps = True
         else:

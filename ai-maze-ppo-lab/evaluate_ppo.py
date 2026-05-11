@@ -8,9 +8,11 @@ from pathlib import Path
 import numpy as np
 
 from config import (
+    LOCAL_VIEW_SIZE,
     MAPS_DIR,
     MAX_STEPS,
     MODELS_DIR,
+    OBSERVATION_MODE,
     OUTPUTS_DIR,
     RANDOM_MAP_COLS,
     RANDOM_MAP_ROWS,
@@ -118,6 +120,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--view-range", type=int, default=VIEW_RANGE)
     parser.add_argument("--view-width", type=int, default=VIEW_WIDTH)
+    parser.add_argument("--obs-mode", choices=("grid", "strips"), default=OBSERVATION_MODE)
+    parser.add_argument("--local-view-size", type=int, default=LOCAL_VIEW_SIZE)
     parser.add_argument("--outputs-dir", type=str, default=str(OUTPUTS_DIR))
     args = parser.parse_args(argv)
 
@@ -133,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
             max_steps=args.max_steps,
             view_range=args.view_range,
             view_width=args.view_width,
+            observation_mode=args.obs_mode,
+            local_view_size=args.local_view_size,
             seed=args.seed,
         )
         ensure_model_env_compatible(model, env)
@@ -164,6 +170,8 @@ def main(argv: list[str] | None = None) -> None:
             max_steps=args.max_steps,
             view_range=args.view_range,
             view_width=args.view_width,
+            observation_mode=args.obs_mode,
+            local_view_size=args.local_view_size,
             seed=None if args.seed is None else args.seed + index,
         )
         ensure_model_env_compatible(model, env)
@@ -190,6 +198,8 @@ def main(argv: list[str] | None = None) -> None:
             "style": args.random_style,
             "door_orientation": args.door_orientation,
             "endpoint_mode": args.endpoint_mode,
+            "observation_mode": args.obs_mode,
+            "local_view_size": args.local_view_size,
         },
         "fixed_maps": summarize(fixed_results),
         "random_maps": summarize(random_results),

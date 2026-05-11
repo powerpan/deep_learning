@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -20,9 +21,12 @@ from config import (
     DOOR_REWARD,
     EXIT_REWARD,
     KEY_REWARD,
+    LOCAL_VIEW_SIZE,
     LOCKED_DOOR_REWARD,
     MAX_STEPS,
     MAX_STEPS_PER_CELL,
+    OBSERVATION_MODE,
+    RECENT_VISIT_WINDOW,
     REVISIT_PENALTY,
     STEP_REWARD,
     TILE_DOOR,
@@ -38,7 +42,7 @@ from config import (
     WALL_REWARD,
 )
 from random_maps import GeneratedMap
-from vision import encode_line_of_sight, format_observation_shape
+from vision import encode_line_of_sight, encode_local_grid, format_observation_shape
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,9 @@ class MazePPOEnv(gym.Env):
         max_steps: int = MAX_STEPS,
         view_range: int = VIEW_RANGE,
         view_width: int = VIEW_WIDTH,
+        observation_mode: str = OBSERVATION_MODE,
+        local_view_size: int = LOCAL_VIEW_SIZE,
+        recent_visit_window: int = RECENT_VISIT_WINDOW,
         exploration_reward: bool = False,
         seed: int | None = None,
     ) -> None:
@@ -133,6 +140,9 @@ class MazePPOEnv(gym.Env):
         self.max_steps = max_steps
         self.view_range = view_range
         self.view_width = view_width
+        self.observation_mode = observation_mode
+        self.local_view_size = local_view_size
+        self.recent_visit_window = recent_visit_window
         self.exploration_reward = exploration_reward
         self.random_map_factory = random_map_factory
         self.random_map_probability = float(np.clip(random_map_probability, 0.0, 1.0))
@@ -145,11 +155,18 @@ class MazePPOEnv(gym.Env):
             raise ValueError("Provide map_path, map_lines, map_sources, or random_map_factory")
 
         self.action_space = spaces.Discrete(len(ACTIONS))
+        obs_shape = format_observation_shape(
+            view_range,
+            view_width,
+            observation_mode,
+            local_view_size,
+        )
+        obs_dtype = np.uint8 if observation_mode == "grid" else np.float32
         self.observation_space = spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=format_observation_shape(view_range, view_width),
-            dtype=np.float32,
+            low=0,
+            high=255 if observation_mode == "grid" else 1.0,
+            shape=obs_shape,
+            dtype=obs_dtype,
         )
 
         self.map_data: MapData | None = None
@@ -163,6 +180,10 @@ class MazePPOEnv(gym.Env):
         self.total_reward = 0.0
         self.last_event = "reset"
         self.visit_counts: np.ndarray | None = None
+        self.facing_action = 3
+        self.last_action = -1
+        self.last_reward = 0.0
+        self.recent_positions = deque(maxlen=max(1, int(recent_visit_window)))
 
     @property
     def rows(self) -> int:
@@ -194,6 +215,11 @@ class MazePPOEnv(gym.Env):
         self.last_event = "reset"
         self.visit_counts = np.zeros((self.rows, self.cols), dtype=np.int32)
         self.visit_counts[self.agent_pos] = 1
+        self.facing_action = 3
+        self.last_action = -1
+        self.last_reward = 0.0
+        self.recent_positions = deque(maxlen=max(1, int(self.recent_visit_window)))
+        self.recent_positions.append(self.agent_pos)
 
         return self._observation(), self._info()
 
@@ -203,6 +229,7 @@ class MazePPOEnv(gym.Env):
             raise ValueError(f"Invalid action: {action}")
 
         self.step_count += 1
+        self.facing_action = action
         reward = STEP_REWARD
         terminated = False
         truncated = False
@@ -253,6 +280,9 @@ class MazePPOEnv(gym.Env):
             self.last_event = "max_steps"
 
         self.total_reward += reward
+        self.last_action = action
+        self.last_reward = reward
+        self.recent_positions.append(self.agent_pos)
         return self._observation(), reward, terminated, truncated, self._info()
 
     def _mark_visit_and_get_exploration_reward(self) -> float:
@@ -293,6 +323,20 @@ class MazePPOEnv(gym.Env):
         raise RuntimeError("No map source available")
 
     def _observation(self) -> np.ndarray:
+        if self.observation_mode == "grid":
+            return encode_local_grid(
+                self.grid,
+                self.agent_pos,
+                self.has_key,
+                self.key_collected,
+                self.step_count,
+                self.max_steps,
+                self.local_view_size,
+                self.facing_action,
+                self.last_action,
+                self.last_reward,
+                list(self.recent_positions),
+            )
         return encode_line_of_sight(
             self.grid,
             self.agent_pos,
@@ -317,5 +361,8 @@ class MazePPOEnv(gym.Env):
             "steps": self.step_count,
             "total_reward": self.total_reward,
             "event": self.last_event,
+            "facing_action": self.facing_action,
+            "last_action": self.last_action,
+            "last_reward": self.last_reward,
             "visit_count": int(self.visit_counts[self.agent_pos]) if self.visit_counts is not None else 0,
         }

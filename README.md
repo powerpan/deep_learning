@@ -3,7 +3,7 @@
 这个仓库目前包含两个本地强化学习迷宫实验项目：
 
 - `ai-maze-lab/`：轻量 Q-learning + NumPy + Pygame 版本，包含训练日志、曲线、热力图、钥匙和门规则，以及 macOS 双击启动包装。
-- `ai-maze-ppo-lab/`：局部窄视野带 + Gymnasium + Stable-Baselines3/sb3-contrib PPO 版本，用 Recurrent PPO 训练更通用的迷宫策略网络；界面分为训练场和试验场，也包含 macOS 双击启动包装。
+- `ai-maze-ppo-lab/`：局部小网格观察 + Gymnasium + Stable-Baselines3/sb3-contrib PPO 版本，用 Recurrent CNN PPO 训练更通用的迷宫策略网络；界面分为训练场和试验场，也包含 macOS 双击启动包装。
 
 ## 快速入口
 

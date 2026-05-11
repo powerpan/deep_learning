@@ -23,9 +23,11 @@ import pygame
 from config import (
     ACTIONS,
     ACTION_NAMES,
+    LOCAL_VIEW_SIZE,
     MAPS_DIR,
     MAX_STEPS,
     MODELS_DIR,
+    OBSERVATION_MODE,
     OUTPUTS_DIR,
     RANDOM_DOOR_ORIENTATION,
     RANDOM_ENDPOINT_MODE,
@@ -97,11 +99,17 @@ CURRICULUM_LABELS = {
     "basic-to-keydoor": "开启",
     "none": "关闭",
 }
+OBS_MODE_LABELS = {
+    "grid": "网格CNN",
+    "strips": "四向带",
+}
 STYLE_OPTIONS = tuple(STYLE_LABELS)
 DOOR_OPTIONS = tuple(DOOR_LABELS)
 ENDPOINT_OPTIONS = tuple(ENDPOINT_LABELS)
 ALGO_OPTIONS = tuple(ALGO_LABELS)
 CURRICULUM_OPTIONS = tuple(CURRICULUM_LABELS)
+OBS_MODE_OPTIONS = tuple(OBS_MODE_LABELS)
+LOCAL_VIEW_OPTIONS = (7, 9)
 
 COLORS = {
     "background": (18, 21, 27),
@@ -205,6 +213,8 @@ class MazePPOApp:
         self.n_envs = PPO_N_ENVS
         self.ppo_algo = PPO_ALGO
         self.curriculum = PPO_CURRICULUM
+        self.obs_mode = OBSERVATION_MODE
+        self.local_view_size = LOCAL_VIEW_SIZE
         self.memory_assist = False
         self.deterministic_experiment = False
         self.random_experiment_index = 0
@@ -241,7 +251,12 @@ class MazePPOApp:
     def load_map(self, index: int):
         self.fixed_maps = self._discover_fixed_maps()
         self.map_index = index % len(self.fixed_maps)
-        self.env = MazePPOEnv(map_path=self.fixed_maps[self.map_index], max_steps=MAX_STEPS)
+        self.env = MazePPOEnv(
+            map_path=self.fixed_maps[self.map_index],
+            max_steps=MAX_STEPS,
+            observation_mode=self.obs_mode,
+            local_view_size=self.local_view_size,
+        )
         self.obs, self.info = self.env.reset()
         self.model = None
         self.mode = "ready"
@@ -269,7 +284,12 @@ class MazePPOApp:
                 self.random_map_index = index % len(self.random_history)
                 generated = self.random_history[self.random_map_index]
                 status = "已载入随机实验地图"
-        self.env = MazePPOEnv(map_lines=generated.lines, max_steps=MAX_STEPS)
+        self.env = MazePPOEnv(
+            map_lines=generated.lines,
+            max_steps=MAX_STEPS,
+            observation_mode=self.obs_mode,
+            local_view_size=self.local_view_size,
+        )
         self.obs, self.info = self.env.reset()
         self.model = None
         self.mode = "ready"
@@ -445,6 +465,29 @@ class MazePPOApp:
         self.curriculum = self._next_option(self.curriculum, CURRICULUM_OPTIONS)
         self.status = f"课程学习已{CURRICULUM_LABELS[self.curriculum]}"
 
+    def _cycle_obs_mode(self):
+        if self.task_process is not None or self.mode == "replay":
+            self.status = "训练或回放中，暂不能切换观察格式"
+            return
+        self.obs_mode = self._next_option(self.obs_mode, OBS_MODE_OPTIONS)
+        self._reload_current_env()
+        self.status = f"观察格式设为 {OBS_MODE_LABELS[self.obs_mode]}"
+
+    def _cycle_local_view_size(self):
+        if self.task_process is not None or self.mode == "replay":
+            self.status = "训练或回放中，暂不能切换视野大小"
+            return
+        index = LOCAL_VIEW_OPTIONS.index(self.local_view_size) if self.local_view_size in LOCAL_VIEW_OPTIONS else 0
+        self.local_view_size = LOCAL_VIEW_OPTIONS[(index + 1) % len(LOCAL_VIEW_OPTIONS)]
+        self._reload_current_env()
+        self.status = f"局部视野设为 {self.local_view_size}x{self.local_view_size}"
+
+    def _reload_current_env(self):
+        if self.current_map_kind == "fixed":
+            self.load_map(self.map_index)
+        else:
+            self.load_random_experiment_map(self.random_map_index)
+
     def _toggle_memory_assist(self):
         self.memory_assist = not self.memory_assist
         self.status = f"记忆辅助已{'开启' if self.memory_assist else '关闭'}"
@@ -500,6 +543,10 @@ class MazePPOApp:
             self.ppo_algo,
             "--curriculum",
             self.curriculum,
+            "--obs-mode",
+            self.obs_mode,
+            "--local-view-size",
+            str(self.local_view_size),
             "--model-path",
             str(MODEL_PATH),
             "--outputs-dir",
@@ -532,6 +579,10 @@ class MazePPOApp:
             self.door_orientation,
             "--endpoint-mode",
             self.endpoint_mode,
+            "--obs-mode",
+            self.obs_mode,
+            "--local-view-size",
+            str(self.local_view_size),
             "--outputs-dir",
             str(OUTPUTS_DIR),
         ]
@@ -741,6 +792,8 @@ class MazePPOApp:
             self.env.agent_pos,
             self.env.view_range,
             self.env.view_width,
+            observation_mode=self.env.observation_mode,
+            local_view_size=self.env.local_view_size,
         ):
             tile = self.env.grid[row][col]
             if tile == TILE_KEY and not self.env.key_collected:
@@ -894,6 +947,8 @@ class MazePPOApp:
             self.env.agent_pos,
             self.env.view_range,
             self.env.view_width,
+            observation_mode=self.env.observation_mode,
+            local_view_size=self.env.local_view_size,
         )
         ox, oy = self.board_origin
 
@@ -964,7 +1019,10 @@ class MazePPOApp:
             f"状态：{self._shorten(self.status, 24)}",
             f"模型：{'已存在' if MODEL_PATH.exists() else '未训练'}  步数：{self.info.get('steps', 0)}/{self.env.max_steps}",
             f"奖励：{self.info.get('total_reward', 0.0):.1f}  钥匙：{key_text}  门：{door_text}",
-            f"视野：四向 {VIEW_RANGE}x{VIEW_WIDTH} 窄视野带",
+            (
+                f"观察：{OBS_MODE_LABELS[self.obs_mode]}  "
+                f"{self.local_view_size}x{self.local_view_size}  朝向/上步/重复"
+            ),
             f"随机：{self.random_rows}x{self.random_cols}  墙{self.wall_density:.2f}  陷{self.trap_density:.2f}",
             (
                 f"风格：{STYLE_LABELS[self.random_style]}  门方向：{DOOR_LABELS[self.door_orientation]}  "
@@ -1053,6 +1111,13 @@ class MazePPOApp:
             y += height + gap
             self.buttons.extend(
                 [
+                    Button((x1, y, button_width, height), f"观察 {OBS_MODE_LABELS[self.obs_mode]}", self._cycle_obs_mode, not busy),
+                    Button((x2, y, button_width, height), f"视野 {self.local_view_size}x{self.local_view_size}", self._cycle_local_view_size, not busy),
+                ]
+            )
+            y += height + gap
+            self.buttons.extend(
+                [
                     Button((x1, y, button_width, height), f"门方向 {DOOR_LABELS[self.door_orientation]}", self._cycle_door_orientation, not busy),
                     Button((x2, y, button_width, height), f"位置 {ENDPOINT_LABELS[self.endpoint_mode]}", self._cycle_endpoint_mode, not busy),
                 ]
@@ -1133,6 +1198,13 @@ class MazePPOApp:
                         not busy,
                     ),
                     Button((x2, y, button_width, height), f"风格 {STYLE_LABELS[self.random_style]}", self._cycle_random_style, not busy),
+                ]
+            )
+            y += height + gap
+            self.buttons.extend(
+                [
+                    Button((x1, y, button_width, height), f"观察 {OBS_MODE_LABELS[self.obs_mode]}", self._cycle_obs_mode, not busy),
+                    Button((x2, y, button_width, height), f"视野 {self.local_view_size}x{self.local_view_size}", self._cycle_local_view_size, not busy),
                 ]
             )
             y += height + gap

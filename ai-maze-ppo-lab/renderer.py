@@ -73,7 +73,14 @@ class MazeRenderer:
 
         assert self.screen is not None
         self.screen.fill(BACKGROUND)
-        visible = visible_cells(env.grid, env.agent_pos, env.view_range, env.view_width)
+        visible = visible_cells(
+            env.grid,
+            env.agent_pos,
+            env.view_range,
+            env.view_width,
+            observation_mode=env.observation_mode,
+            local_view_size=env.local_view_size,
+        )
 
         for row in range(env.rows):
             for col in range(env.cols):
@@ -141,6 +148,10 @@ class MazeRenderer:
             title += f" | Episode {episode}"
         key_text = "not needed" if not info.get("requires_key", True) else str(info.get("has_key", False))
         door_text = "none" if not info.get("has_door", True) else str(info.get("passed_door", False))
+        if env.observation_mode == "grid":
+            vision_text = f"local grid {env.local_view_size}x{env.local_view_size}, CNN"
+        else:
+            vision_text = f"directional strips, {env.view_range} x {env.view_width}"
         lines = [
             title,
             f"Map: {env.map_name}",
@@ -153,7 +164,7 @@ class MazeRenderer:
                 f"Key: {key_text}   "
                 f"Door: {door_text}   "
                 f"Success: {info.get('success', False)}   "
-                f"Vision: directional strips, {env.view_range} x {env.view_width}"
+                f"Vision: {vision_text}"
             ),
         ]
         for index, line in enumerate(lines):
