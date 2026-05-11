@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import time
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -25,6 +26,7 @@ from config import (
     PPO_N_ENVS,
     PPO_N_STEPS,
     PPO_TORCH_THREADS,
+    PPO_VEC_ENV,
     RANDOM_MAP_COLS,
     RANDOM_MAP_ROWS,
     RANDOM_DOOR_ORIENTATION,
@@ -173,16 +175,16 @@ def format_progress(
     steps: int,
     total_timesteps: int,
     episodes: int,
-    recent_successes: list[float],
+    elapsed_seconds: float | None = None,
 ) -> str:
     capped_steps = min(steps, total_timesteps)
     percent = 100.0 if total_timesteps <= 0 else capped_steps / total_timesteps * 100.0
-    success_text = "-"
-    if recent_successes:
-        success_text = f"{float(np.mean(recent_successes)) * 100:.0f}%"
+    speed_text = "-"
+    if elapsed_seconds and elapsed_seconds > 0 and capped_steps > 0:
+        speed_text = f"{capped_steps / elapsed_seconds:.0f}步/s"
     return (
-        f"训练进度：{capped_steps:,}/{total_timesteps:,} steps "
-        f"({percent:.1f}%) | episodes {episodes} | 近100成功率 {success_text}"
+        f"训练进度：{capped_steps:,}/{total_timesteps:,} "
+        f"{percent:.0f}% 回合{episodes} {speed_text}"
     )
 
 
@@ -221,7 +223,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--view-width", type=int, default=VIEW_WIDTH)
     parser.add_argument("--ent-coef", type=float, default=PPO_ENT_COEF)
     parser.add_argument("--n-envs", type=int, default=PPO_N_ENVS)
-    parser.add_argument("--vec-env", choices=("auto", "dummy", "subproc"), default="auto")
+    parser.add_argument(
+        "--vec-env",
+        choices=("auto", "dummy", "subproc"),
+        default=PPO_VEC_ENV,
+    )
     parser.add_argument("--torch-threads", type=int, default=PPO_TORCH_THREADS)
     parser.add_argument("--no-exploration-reward", action="store_true")
     parser.add_argument("--model-path", type=str, default=str(MODELS_DIR / "ppo_maze.zip"))
@@ -246,8 +252,10 @@ def main(argv: list[str] | None = None) -> None:
             self.episodes = 0
             self.recent_successes: list[float] = []
             self._last_progress_line = ""
+            self._start_time = 0.0
 
         def _on_training_start(self) -> None:
+            self._start_time = time.perf_counter()
             self._print_progress(0)
 
         def _on_step(self) -> bool:
@@ -268,14 +276,14 @@ def main(argv: list[str] | None = None) -> None:
             self._print_progress(self.num_timesteps)
 
         def _on_training_end(self) -> None:
-            self._print_progress(self.num_timesteps)
+            return None
 
         def _print_progress(self, steps: int) -> None:
             line = format_progress(
                 steps,
                 self.total_timesteps,
                 self.episodes,
-                self.recent_successes,
+                time.perf_counter() - self._start_time if self._start_time else None,
             )
             if line != self._last_progress_line:
                 print(line, flush=True)
@@ -315,7 +323,7 @@ def main(argv: list[str] | None = None) -> None:
     ]
     vec_env_kind = args.vec_env
     if vec_env_kind == "auto":
-        vec_env_kind = "subproc" if n_envs > 1 else "dummy"
+        vec_env_kind = "dummy"
     if vec_env_kind == "subproc" and n_envs > 1:
         env = SubprocVecEnv(env_fns, start_method="spawn")
     else:
