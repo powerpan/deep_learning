@@ -4,7 +4,12 @@ import numpy as np
 
 from config import ACTIONS
 from maze_env import MazePPOEnv
-from random_maps import generate_random_key_door_map, is_solvable_key_door
+from random_maps import (
+    build_random_map_pool,
+    find_tile,
+    generate_random_key_door_map,
+    is_solvable_key_door,
+)
 from vision import CHANNEL_INDEX, encode_line_of_sight, observation_size
 
 
@@ -37,20 +42,79 @@ class MazeRulesTest(unittest.TestCase):
         self.assertFalse(truncated)
         self.assertTrue(info["success"])
 
+    def test_exploration_reward_is_opt_in(self):
+        env = MazePPOEnv(
+            map_lines=["#####", "#S..#", "#..E#", "#####"],
+            exploration_reward=True,
+        )
+        env.reset()
+        _, reward, *_ = env.step(3)
+        self.assertAlmostEqual(reward, -0.05)
+        env.step(2)
+        _, reward, *_ = env.step(3)
+        self.assertAlmostEqual(reward, -0.1)
+        env.step(2)
+        _, reward, *_ = env.step(3)
+        self.assertAlmostEqual(reward, -0.13)
+        _, reward, *_ = env.step(2)
+        self.assertAlmostEqual(reward, -0.13)
+
 
 class VisionTest(unittest.TestCase):
     def test_observation_shape_is_fixed(self):
         grid = [list("#######"), list("#S.K.E#"), list("#######")]
-        obs = encode_line_of_sight(grid, (1, 1), False, False, 0, 100, view_range=7)
-        self.assertEqual(obs.shape, (observation_size(7),))
+        obs = encode_line_of_sight(
+            grid,
+            (1, 1),
+            False,
+            False,
+            0,
+            100,
+            view_range=3,
+            view_width=3,
+        )
+        self.assertEqual(obs.shape, (observation_size(3, 3),))
 
     def test_wall_hides_tiles_behind_it(self):
         grid = [list("########"), list("#S#K..E#"), list("########")]
-        obs = encode_line_of_sight(grid, (1, 1), False, False, 0, 100, view_range=3)
-        rays = obs[:-2].reshape((len(ACTIONS), 3, -1))
-        right_ray = rays[3]
-        self.assertEqual(np.argmax(right_ray[0]), CHANNEL_INDEX["wall"])
-        self.assertEqual(np.argmax(right_ray[1]), CHANNEL_INDEX["unknown"])
+        obs = encode_line_of_sight(
+            grid,
+            (1, 1),
+            False,
+            False,
+            0,
+            100,
+            view_range=3,
+            view_width=3,
+        )
+        strips = obs[:-2].reshape((len(ACTIONS), 3, 3, -1))
+        right_strip = strips[3]
+        center_lane = 1
+        self.assertEqual(np.argmax(right_strip[0, center_lane]), CHANNEL_INDEX["wall"])
+        self.assertEqual(np.argmax(right_strip[1, center_lane]), CHANNEL_INDEX["unknown"])
+
+    def test_directional_strip_has_side_vision(self):
+        grid = [
+            list("########"),
+            list("#......#"),
+            list("#.S.K.E#"),
+            list("#......#"),
+            list("########"),
+        ]
+        obs = encode_line_of_sight(
+            grid,
+            (2, 2),
+            False,
+            False,
+            0,
+            100,
+            view_range=3,
+            view_width=3,
+        )
+        strips = obs[:-2].reshape((len(ACTIONS), 3, 3, -1))
+        right_strip = strips[3]
+        self.assertEqual(np.argmax(right_strip[1, 1]), CHANNEL_INDEX["key"])
+        self.assertEqual(np.argmax(right_strip[0, 0]), CHANNEL_INDEX["empty"])
 
 
 class RandomMapTest(unittest.TestCase):
@@ -62,6 +126,69 @@ class RandomMapTest(unittest.TestCase):
         self.assertIn("D", text)
         self.assertIn("E", text)
         self.assertTrue(is_solvable_key_door(generated.lines))
+
+    def test_random_map_pool_uses_custom_size(self):
+        pool = build_random_map_pool(
+            2,
+            seed=123,
+            rows=13,
+            cols=17,
+            wall_density=0.18,
+            trap_density=0.08,
+            style="rooms",
+            door_orientation="vertical",
+            endpoint_mode="edges",
+        )
+        self.assertEqual(len(pool), 2)
+        self.assertTrue(all(len(item.lines) == 13 for item in pool))
+        self.assertTrue(all(len(item.lines[0]) == 17 for item in pool))
+        self.assertTrue(all(is_solvable_key_door(item.lines) for item in pool))
+
+    def test_random_maps_support_barrier_orientations(self):
+        horizontal = generate_random_key_door_map(
+            rng=7,
+            door_orientation="horizontal",
+            endpoint_mode="corners",
+            wall_density=0.05,
+        )
+        vertical = generate_random_key_door_map(
+            rng=8,
+            door_orientation="vertical",
+            endpoint_mode="corners",
+            wall_density=0.05,
+        )
+
+        h_door = find_tile(horizontal.lines, "D")
+        v_door = find_tile(vertical.lines, "D")
+        self.assertIsNotNone(h_door)
+        self.assertIsNotNone(v_door)
+        assert h_door is not None
+        assert v_door is not None
+
+        h_row_walls = horizontal.lines[h_door[0]].count("#")
+        h_col_walls = sum(line[h_door[1]] == "#" for line in horizontal.lines)
+        v_row_walls = vertical.lines[v_door[0]].count("#")
+        v_col_walls = sum(line[v_door[1]] == "#" for line in vertical.lines)
+
+        self.assertGreater(h_row_walls, h_col_walls)
+        self.assertGreater(v_col_walls, v_row_walls)
+        self.assertTrue(is_solvable_key_door(horizontal.lines))
+        self.assertTrue(is_solvable_key_door(vertical.lines))
+
+    def test_random_map_styles_are_solvable(self):
+        for index, style in enumerate(["open", "split", "rooms", "deadends", "maze"]):
+            with self.subTest(style=style):
+                generated = generate_random_key_door_map(
+                    rng=100 + index,
+                    rows=15,
+                    cols=21,
+                    style=style,
+                    door_orientation="mixed",
+                    endpoint_mode="mixed",
+                    wall_density=0.14,
+                    trap_density=0.05,
+                )
+                self.assertTrue(is_solvable_key_door(generated.lines))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+name: ai-maze-lab
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - numpy
+      - pygame
+      - matplotlib
+      - gymnasium
+      - stable-baselines3
+      - torch

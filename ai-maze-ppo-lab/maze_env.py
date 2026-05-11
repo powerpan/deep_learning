@@ -16,10 +16,13 @@ except ImportError as exc:  # pragma: no cover - exercised only before install.
 
 from config import (
     ACTIONS,
+    DISCOVERY_REWARD,
+    DOOR_REWARD,
     EXIT_REWARD,
     KEY_REWARD,
     LOCKED_DOOR_REWARD,
     MAX_STEPS,
+    REVISIT_PENALTY,
     STEP_REWARD,
     TILE_DOOR,
     TILE_EMPTY,
@@ -30,8 +33,8 @@ from config import (
     TILE_WALL,
     TRAP_REWARD,
     VIEW_RANGE,
+    VIEW_WIDTH,
     WALL_REWARD,
-    DOOR_REWARD,
 )
 from random_maps import GeneratedMap
 from vision import encode_line_of_sight, format_observation_shape
@@ -109,12 +112,16 @@ class MazePPOEnv(gym.Env):
         random_map_probability: float = 0.0,
         max_steps: int = MAX_STEPS,
         view_range: int = VIEW_RANGE,
+        view_width: int = VIEW_WIDTH,
+        exploration_reward: bool = False,
         seed: int | None = None,
     ) -> None:
         super().__init__()
         self.rng = np.random.default_rng(seed)
         self.max_steps = max_steps
         self.view_range = view_range
+        self.view_width = view_width
+        self.exploration_reward = exploration_reward
         self.random_map_factory = random_map_factory
         self.random_map_probability = float(np.clip(random_map_probability, 0.0, 1.0))
         self.map_lines = map_lines
@@ -129,7 +136,7 @@ class MazePPOEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
-            shape=format_observation_shape(view_range),
+            shape=format_observation_shape(view_range, view_width),
             dtype=np.float32,
         )
 
@@ -143,6 +150,7 @@ class MazePPOEnv(gym.Env):
         self.step_count = 0
         self.total_reward = 0.0
         self.last_event = "reset"
+        self.visit_counts: np.ndarray | None = None
 
     @property
     def rows(self) -> int:
@@ -171,6 +179,8 @@ class MazePPOEnv(gym.Env):
         self.step_count = 0
         self.total_reward = 0.0
         self.last_event = "reset"
+        self.visit_counts = np.zeros((self.rows, self.cols), dtype=np.int32)
+        self.visit_counts[self.agent_pos] = 1
 
         return self._observation(), self._info()
 
@@ -222,12 +232,27 @@ class MazePPOEnv(gym.Env):
                     terminated = True
                     self.last_event = "exit"
 
+                if self.exploration_reward:
+                    reward += self._mark_visit_and_get_exploration_reward()
+
         if self.step_count >= self.max_steps and not terminated:
             truncated = True
             self.last_event = "max_steps"
 
         self.total_reward += reward
         return self._observation(), reward, terminated, truncated, self._info()
+
+    def _mark_visit_and_get_exploration_reward(self) -> float:
+        if self.visit_counts is None:
+            return 0.0
+        row, col = self.agent_pos
+        previous_visits = int(self.visit_counts[row, col])
+        self.visit_counts[row, col] += 1
+        if previous_visits == 0:
+            return DISCOVERY_REWARD
+        if previous_visits >= 2:
+            return REVISIT_PENALTY
+        return 0.0
 
     def _choose_map(self) -> MapData:
         use_random = (
@@ -260,6 +285,7 @@ class MazePPOEnv(gym.Env):
             self.step_count,
             self.max_steps,
             self.view_range,
+            self.view_width,
         )
 
     def _info(self) -> dict:
@@ -273,4 +299,5 @@ class MazePPOEnv(gym.Env):
             "steps": self.step_count,
             "total_reward": self.total_reward,
             "event": self.last_event,
+            "visit_count": int(self.visit_counts[self.agent_pos]) if self.visit_counts is not None else 0,
         }

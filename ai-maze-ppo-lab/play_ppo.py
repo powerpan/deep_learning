@@ -5,8 +5,10 @@ import os
 import time
 from pathlib import Path
 
-from config import ACTION_NAMES, MAPS_DIR, MAX_STEPS, MODELS_DIR, OUTPUTS_DIR, VIEW_RANGE
+from config import ACTION_NAMES, MAPS_DIR, MAX_STEPS, MODELS_DIR, OUTPUTS_DIR, VIEW_RANGE, VIEW_WIDTH
 
+(OUTPUTS_DIR / ".matplotlib").mkdir(parents=True, exist_ok=True)
+(OUTPUTS_DIR / ".cache").mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(OUTPUTS_DIR / ".matplotlib"))
 os.environ.setdefault("XDG_CACHE_HOME", str(OUTPUTS_DIR / ".cache"))
 
@@ -36,6 +38,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--outputs-dir", type=str, default=str(OUTPUTS_DIR))
     parser.add_argument("--max-steps", type=int, default=MAX_STEPS)
     parser.add_argument("--view-range", type=int, default=VIEW_RANGE)
+    parser.add_argument("--view-width", type=int, default=VIEW_WIDTH)
     parser.add_argument("--delay", type=float, default=0.08)
     parser.add_argument("--no-render", action="store_true")
     args = parser.parse_args(argv)
@@ -46,6 +49,7 @@ def main(argv: list[str] | None = None) -> None:
         map_path=args.map,
         max_steps=args.max_steps,
         view_range=args.view_range,
+        view_width=args.view_width,
     )
     renderer = None if args.no_render else MazeRenderer(show_vision=True)
 

@@ -14,9 +14,9 @@ def print_help() -> None:
     print("AI Maze PPO Lab")
     print("")
     print("Usage:")
-    print("  python main.py train --timesteps 500000 --random-maps 200")
+    print("  python main.py train --timesteps 500000 --n-envs 4 --random-maps 200 --random-style mixed")
     print("  python main.py play --model models/ppo_maze.zip --map maps/level_1.txt")
-    print("  python main.py evaluate --model models/ppo_maze.zip --random-tests 50")
+    print("  python main.py evaluate --model models/ppo_maze.zip --random-tests 50 --endpoint-mode mixed")
     print("")
     print("Commands:")
     for name, (_, description) in COMMANDS.items():

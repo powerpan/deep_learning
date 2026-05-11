@@ -73,7 +73,7 @@ class MazeRenderer:
 
         assert self.screen is not None
         self.screen.fill(BACKGROUND)
-        visible = visible_cells(env.grid, env.agent_pos, env.view_range)
+        visible = visible_cells(env.grid, env.agent_pos, env.view_range, env.view_width)
 
         for row in range(env.rows):
             for col in range(env.cols):
@@ -151,7 +151,7 @@ class MazeRenderer:
                 f"Key: {info.get('has_key', False)}   "
                 f"Door: {info.get('passed_door', False)}   "
                 f"Success: {info.get('success', False)}   "
-                f"Vision: straight rays, range {env.view_range}"
+                f"Vision: directional strips, {env.view_range} x {env.view_width}"
             ),
         ]
         for index, line in enumerate(lines):
