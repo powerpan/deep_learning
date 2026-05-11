@@ -34,6 +34,8 @@ from config import (
     RANDOM_MAP_STYLE,
     RANDOM_TRAP_DENSITY,
     RANDOM_WALL_DENSITY,
+    PPO_ALGO,
+    PPO_CURRICULUM,
     PPO_N_ENVS,
     TILE_DOOR,
     TILE_EMPTY,
@@ -87,9 +89,19 @@ ENDPOINT_LABELS = {
     "edges": "边缘",
     "interior": "内部",
 }
+ALGO_LABELS = {
+    "recurrent-ppo": "Recurrent",
+    "ppo": "普通PPO",
+}
+CURRICULUM_LABELS = {
+    "basic-to-keydoor": "开启",
+    "none": "关闭",
+}
 STYLE_OPTIONS = tuple(STYLE_LABELS)
 DOOR_OPTIONS = tuple(DOOR_LABELS)
 ENDPOINT_OPTIONS = tuple(ENDPOINT_LABELS)
+ALGO_OPTIONS = tuple(ALGO_LABELS)
+CURRICULUM_OPTIONS = tuple(CURRICULUM_LABELS)
 
 COLORS = {
     "background": (18, 21, 27),
@@ -191,6 +203,8 @@ class MazePPOApp:
         self.endpoint_mode = RANDOM_ENDPOINT_MODE
         self.ent_coef = 0.03
         self.n_envs = PPO_N_ENVS
+        self.ppo_algo = PPO_ALGO
+        self.curriculum = PPO_CURRICULUM
         self.memory_assist = False
         self.deterministic_experiment = False
         self.random_experiment_index = 0
@@ -423,6 +437,14 @@ class MazePPOApp:
         self.n_envs = options[next_index]
         self.status = f"并行环境数设为 {self.n_envs}"
 
+    def _cycle_ppo_algo(self):
+        self.ppo_algo = self._next_option(self.ppo_algo, ALGO_OPTIONS)
+        self.status = f"训练算法设为 {ALGO_LABELS[self.ppo_algo]}"
+
+    def _cycle_curriculum(self):
+        self.curriculum = self._next_option(self.curriculum, CURRICULUM_OPTIONS)
+        self.status = f"课程学习已{CURRICULUM_LABELS[self.curriculum]}"
+
     def _toggle_memory_assist(self):
         self.memory_assist = not self.memory_assist
         self.status = f"记忆辅助已{'开启' if self.memory_assist else '关闭'}"
@@ -474,6 +496,10 @@ class MazePPOApp:
             str(self.ent_coef),
             "--n-envs",
             str(self.n_envs),
+            "--algo",
+            self.ppo_algo,
+            "--curriculum",
+            self.curriculum,
             "--model-path",
             str(MODEL_PATH),
             "--outputs-dir",
@@ -941,12 +967,16 @@ class MazePPOApp:
             f"视野：四向 {VIEW_RANGE}x{VIEW_WIDTH} 窄视野带",
             f"随机：{self.random_rows}x{self.random_cols}  墙{self.wall_density:.2f}  陷{self.trap_density:.2f}",
             (
-                f"风格：{STYLE_LABELS[self.random_style]}  门：{DOOR_LABELS[self.door_orientation]}  "
+                f"风格：{STYLE_LABELS[self.random_style]}  门方向：{DOOR_LABELS[self.door_orientation]}  "
                 f"位置：{ENDPOINT_LABELS[self.endpoint_mode]}"
             ),
         ]
         if self.screen_mode == "training":
-            lines.append(f"训练：entropy {self.ent_coef:.2f}  并行 {self.n_envs}  + 新格奖励")
+            lines.append(
+                f"训练：{ALGO_LABELS[self.ppo_algo]}  课程{CURRICULUM_LABELS[self.curriculum]}  "
+                f"并行 {self.n_envs}"
+            )
+            lines.append(f"参数：entropy {self.ent_coef:.2f}  + 新格奖励")
         else:
             action_mode = "贪心" if self.deterministic_experiment else "采样"
             assist = "开" if self.memory_assist else "关"
@@ -1023,7 +1053,7 @@ class MazePPOApp:
             y += height + gap
             self.buttons.extend(
                 [
-                    Button((x1, y, button_width, height), f"门向 {DOOR_LABELS[self.door_orientation]}", self._cycle_door_orientation, not busy),
+                    Button((x1, y, button_width, height), f"门方向 {DOOR_LABELS[self.door_orientation]}", self._cycle_door_orientation, not busy),
                     Button((x2, y, button_width, height), f"位置 {ENDPOINT_LABELS[self.endpoint_mode]}", self._cycle_endpoint_mode, not busy),
                 ]
             )
@@ -1039,6 +1069,13 @@ class MazePPOApp:
                 [
                     Button((x1, y, button_width, height), f"探索 {self.ent_coef:.2f}", self._cycle_ent_coef, not busy),
                     Button((x2, y, button_width, height), f"并行 {self.n_envs}", self._cycle_n_envs, not busy),
+                ]
+            )
+            y += height + gap
+            self.buttons.extend(
+                [
+                    Button((x1, y, button_width, height), f"算法 {ALGO_LABELS[self.ppo_algo]}", self._cycle_ppo_algo, not busy),
+                    Button((x2, y, button_width, height), f"课程 {CURRICULUM_LABELS[self.curriculum]}", self._cycle_curriculum, not busy),
                 ]
             )
             y += height + gap
@@ -1101,7 +1138,7 @@ class MazePPOApp:
             y += height + gap
             self.buttons.extend(
                 [
-                    Button((x1, y, button_width, height), f"门向 {DOOR_LABELS[self.door_orientation]}", self._cycle_door_orientation, not busy),
+                    Button((x1, y, button_width, height), f"门方向 {DOOR_LABELS[self.door_orientation]}", self._cycle_door_orientation, not busy),
                     Button((x2, y, button_width, height), f"位置 {ENDPOINT_LABELS[self.endpoint_mode]}", self._cycle_endpoint_mode, not busy),
                 ]
             )
