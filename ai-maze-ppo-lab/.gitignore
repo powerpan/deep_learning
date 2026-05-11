@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+outputs/*
+!outputs/.gitkeep
+models/*
+!models/.gitkeep
+
+*.zip
+*.pt
+*.pth
+*.log

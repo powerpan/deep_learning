@@ -1,0 +1,40 @@
+"""Shared configuration for AI Maze Lab."""
+
+WINDOW_TITLE = "AI Maze Lab - Q-learning Maze"
+
+# Rendering
+CELL_SIZE = 48
+INFO_PANEL_HEIGHT = 112
+MIN_WINDOW_WIDTH = 560
+FPS = 60
+TRAIN_RENDER_DELAY_MS = 35
+REPLAY_DELAY_MS = 130
+END_PAUSE_MS = 1800
+
+# Training
+TRAIN_EPISODES = 2000
+MAX_STEPS_PER_EPISODE = 400
+RENDER_EVERY = 20
+ALPHA = 0.18
+GAMMA = 0.95
+EPSILON_START = 1.0
+EPSILON_DECAY = 0.995
+EPSILON_MIN = 0.03
+
+# Rewards
+STEP_REWARD = -0.1
+WALL_REWARD = -2.0
+LOCKED_DOOR_REWARD = -2.0
+KEY_REWARD = 10.0
+DOOR_REWARD = 5.0
+TRAP_REWARD = -20.0
+EXIT_REWARD = 80.0
+
+# Actions: 0 up, 1 down, 2 left, 3 right
+ACTION_DELTAS = {
+    0: (-1, 0),
+    1: (1, 0),
+    2: (0, -1),
+    3: (0, 1),
+}
+ACTION_COUNT = len(ACTION_DELTAS)

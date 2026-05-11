@@ -1,0 +1,41 @@
+.DS_Store
+Thumbs.db
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Build and package outputs
+build/
+dist/
+*.egg-info/
+
+# Training outputs, local model artifacts, and generated reports
+outputs/
+**/outputs/
+models/
+**/models/
+*.zip
+*.pt
+*.pth
+*.onnx
+*.log
+
+# Local IDE/editor files
+.idea/
+.vscode/
+
+# Matplotlib/font caches
+.matplotlib/
+.matplotlib-cache/
+.cache/
+**/.matplotlib/
+**/.matplotlib-cache/
+**/.cache/

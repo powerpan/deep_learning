@@ -1,0 +1,65 @@
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent
+MAPS_DIR = ROOT_DIR / "maps"
+OUTPUTS_DIR = ROOT_DIR / "outputs"
+MODELS_DIR = ROOT_DIR / "models"
+
+ACTIONS = {
+    0: (-1, 0),
+    1: (1, 0),
+    2: (0, -1),
+    3: (0, 1),
+}
+
+ACTION_NAMES = {
+    0: "UP",
+    1: "DOWN",
+    2: "LEFT",
+    3: "RIGHT",
+}
+
+TILE_START = "S"
+TILE_EXIT = "E"
+TILE_WALL = "#"
+TILE_EMPTY = "."
+TILE_TRAP = "T"
+TILE_KEY = "K"
+TILE_DOOR = "D"
+
+TILE_CHANNELS = (
+    "unknown",
+    "wall",
+    "empty",
+    "trap",
+    "key",
+    "door",
+    "exit",
+)
+
+VIEW_RANGE = 7
+MAX_STEPS = 260
+
+STEP_REWARD = -0.1
+WALL_REWARD = -2.0
+LOCKED_DOOR_REWARD = -2.0
+KEY_REWARD = 10.0
+DOOR_REWARD = 5.0
+TRAP_REWARD = -20.0
+EXIT_REWARD = 80.0
+
+RANDOM_MAP_ROWS = 11
+RANDOM_MAP_COLS = 15
+RANDOM_WALL_DENSITY = 0.12
+RANDOM_TRAP_DENSITY = 0.04
+DEFAULT_RANDOM_MAP_PROB = 0.5
+
+PPO_LEARNING_RATE = 3e-4
+PPO_GAMMA = 0.99
+PPO_N_STEPS = 1024
+PPO_BATCH_SIZE = 64
+PPO_ENT_COEF = 0.01
+
+TILE_SIZE = 42
+PANEL_HEIGHT = 132
+FPS = 30
